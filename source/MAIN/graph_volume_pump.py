@@ -65,6 +65,11 @@ def analyze_ticker(ticker):
     plt.close()
 
     print(f"✅ Saved charts to {img_dir}/")
+    # Save signals to CSV
+    signals_dir = "signals_csv"
+    os.makedirs(signals_dir, exist_ok=True)
+    df.to_csv(f"{signals_dir}/{ticker}_signals.csv", index=False)
+
 
 # Run for multiple tickers
 for t in ["DFLI", "BYND", "PCSA", "AAPL", "BITF", "CIGL", "NVDA", "SES"]:
