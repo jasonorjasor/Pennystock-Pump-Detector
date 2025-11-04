@@ -289,10 +289,12 @@ def analyze_ticker(ticker):
     plt.close()
 
     # === SAVE SIGNALS CSV (UPDATED PATH) ===
-    signals_dir = "data/signals_csv"
+    signals_dir = f"data/signals_csv/{ticker}"
     os.makedirs(signals_dir, exist_ok=True)
+
     df_export = df.reset_index()
-    df_export.to_csv(f"{signals_dir}/{ticker}_signals.csv", index=False)
+    df_export.to_csv(f"{signals_dir}/signals.csv", index=False)
+
 
     print(f"✅ Saved charts to {img_dir}/")
     print(f"✅ Saved data to {signals_dir}/{ticker}_signals.csv")
@@ -305,7 +307,7 @@ def analyze_ticker(ticker):
         backtest_df = auto_classify_signals(backtest_df)
         
         # Save individual ticker backtest (UPDATED PATH)
-        backtest_df.to_csv(f"{signals_dir}/{ticker}_backtest.csv", index=False)
+        backtest_df.to_csv(f"{signals_dir}/backtest.csv", index=False)
         print(f"📊 Backtest results saved to {signals_dir}/{ticker}_backtest.csv")
         
         # Show classification breakdown
@@ -347,7 +349,7 @@ def create_master_truth_csv(tickers):
     all_backtests = []
     
     for ticker in tickers:
-        backtest_path = f"{signals_dir}/{ticker}_backtest.csv"
+        backtest_path = f"{signals_dir}/{ticker}/backtest.csv"
         
         if os.path.exists(backtest_path):
             df = pd.read_csv(backtest_path)
@@ -468,9 +470,13 @@ def create_master_truth_csv(tickers):
 # ============================================
 
 if __name__ == "__main__":
-    tickers = ["DFLI", "BYND", "PCSA", "BITF", "CIGL", "SES",
-           "MBRX", "PFSA", "ATCH", "XHLD", "VSEE", "MOBX",
-           "AZI", "IPSC", "OPI"]
+    tickers = [
+    "FEMY","NAKA","MBRX","AGL","CHGG","IXHL","MODD","PSNY","SHOT","IPSC",
+    "AIRE","OPI","NWTN","SGMO","ACET","PPBT","AZI","MOBX","PCSA","CENN",
+    "ARBK","ICCM","LBGJ","PRPL","VRME","ATCH","ORIS","PFSA","HBIO","XHLD",
+    "VSEE","EHGO"
+        ]
+
     
     print("🚀 Starting Complete Pump Detection System")
     print("="*80)
@@ -491,7 +497,4 @@ if __name__ == "__main__":
     print("✅ COMPLETE ANALYSIS FINISHED")
     print("="*80)
     print("\nNext steps:")
-    print("  1. Review data/signals_csv/MASTER_TRUTH.csv")
-    print("  2. Check if pump detection rate is >40%")
     print("  3. If good: Move to real-time monitoring")
-    print("  4. If needs work: Try threshold tuning (pump_score > 60)")
