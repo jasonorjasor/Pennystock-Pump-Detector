@@ -4,18 +4,186 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
+def backtest_signals(ticker, df):
+    """
+    STEP 1: Add 20-day future returns & drawdown metrics
+    
+    For each pump signal, this calculates:
+    - Forward returns at 1, 5, 10, 20 days
+    - Maximum drawdown in next 20 days
+    - Days until bottom
+    - Maximum gain (if it kept pumping)
+    - Days until peak
+    """
+    
+    signals = df[df['flag'] == True].copy()
+    
+    if len(signals) == 0:
+        return None
+    
+    backtest_results = []
+    
+    for signal_date, signal_row in signals.iterrows():
+        signal_idx = df.index.get_loc(signal_date)
+        entry_price = signal_row['Close']
+        
+        # === FORWARD RETURNS ===
+        forward_returns = {}
+        
+        for days in [1, 5, 10, 20]:
+            future_idx = signal_idx + days
+            
+            if future_idx < len(df):
+                future_price = df.iloc[future_idx]['Close']
+                forward_return = (future_price - entry_price) / entry_price
+                forward_returns[f'return_{days}d'] = forward_return
+            else:
+                forward_returns[f'return_{days}d'] = None
+        
+        # === MAX DRAWDOWN ===
+        # Find worst drop in next 20 days
+        max_drawdown = 0
+        days_to_bottom = None
+        
+        future_window = df.iloc[signal_idx:min(signal_idx+21, len(df))]
+        
+        if len(future_window) > 1:
+            drawdowns = (future_window['Close'] - entry_price) / entry_price
+            max_drawdown = drawdowns.min()
+            
+            if max_drawdown < 0:
+                days_to_bottom = drawdowns.idxmin()
+                days_to_bottom = (days_to_bottom - signal_date).days
+        
+        # === TIME TO PEAK ===
+        # Did it keep pumping before dumping?
+        max_gain = 0
+        days_to_peak = 0
+        
+        if len(future_window) > 1:
+            gains = (future_window['Close'] - entry_price) / entry_price
+            max_gain = gains.max()
+            
+            if max_gain > 0:
+                days_to_peak = gains.idxmax()
+                days_to_peak = (days_to_peak - signal_date).days
+        
+        # Compile all metrics
+        result = {
+            'ticker': ticker,
+            'signal_date': signal_date,
+            'entry_price': entry_price,
+            'pump_score': signal_row['pump_score'],
+            'volume': signal_row['Volume'],
+            'vol_z': signal_row['vol_z'],
+            'vol_ratio': signal_row['vol_ratio'],
+            'signal_return': signal_row['return'],
+            'gap_up': signal_row['gap_up'],
+            'volatility': signal_row['volatility'],
+            
+            # Forward returns
+            'return_1d': forward_returns.get('return_1d'),
+            'return_5d': forward_returns.get('return_5d'),
+            'return_10d': forward_returns.get('return_10d'),
+            'return_20d': forward_returns.get('return_20d'),
+            
+            # Drawdown metrics
+            'max_drawdown_20d': max_drawdown,
+            'days_to_bottom': days_to_bottom,
+            
+            # Peak metrics
+            'max_gain_20d': max_gain,
+            'days_to_peak': days_to_peak,
+        }
+        
+        backtest_results.append(result)
+    
+    return pd.DataFrame(backtest_results)
+
+
+def auto_classify_signals(df):
+    """
+    Improved pump/legit classification logic
+    """
+    
+    def classify_row(row):
+        max_dd = row['max_drawdown_20d']
+        r1 = row['return_1d']
+        r5 = row['return_5d']
+        r10 = row['return_10d']
+        r20 = row['return_20d']
+        days_to_bottom = row['days_to_bottom']
+        
+        # Missing data safety
+        if pd.isna(max_dd) or pd.isna(r20):
+            return 'insufficient_data'
+        
+        # ========================================
+        # CONFIRMED PUMP PATTERNS
+        # ========================================
+        
+        # Pattern 1: Immediate reversal (next day dump)
+        fast_reversal = (not pd.isna(r1)) and (r1 < -0.10)
+        
+        # Pattern 2: Quick crash (within 5 days)
+        quick_crash = (not pd.isna(r5)) and (r5 < -0.15)
+        
+        # Pattern 3: Deep drawdown
+        deep_crash = max_dd < -0.20
+        
+        # Pattern 4: Fast bottom (crashed within 10 days)
+        fast_bottom = (days_to_bottom is not None) and (days_to_bottom <= 10)
+        
+        if fast_reversal or quick_crash:
+            return 'confirmed_pump'
+        
+        if deep_crash and fast_bottom:
+            return 'confirmed_pump'
+        
+        # ========================================
+        # LIKELY PUMP (Medium confidence)
+        # ========================================
+        
+        if max_dd < -0.10:  # 10-20% crash range
+            return 'likely_pump'
+        
+        # ========================================
+        # LIKELY LEGIT (Sustained breakout)
+        # ========================================
+        
+        # Must check if r5 and r10 exist before comparing
+        has_early_data = (not pd.isna(r5)) and (not pd.isna(r10))
+        
+        if has_early_data:
+            # Sustained gains: up at 5d, up at 10d, no crash
+            sustained_rally = (r5 > 0.08 and r10 > 0.08 and max_dd > -0.10)
+            
+            # Strong sustained rally: big gains maintained
+            strong_rally = (r5 > 0.15 and r20 > 0.15 and max_dd > -0.05)
+            
+            if sustained_rally or strong_rally:
+                return 'likely_legit'
+        
+        # ========================================
+        # UNCERTAIN (Everything else)
+        # ========================================
+        
+        return 'uncertain'
+    
+    df['classification'] = df.apply(classify_row, axis=1)
+    return df
+
+
 def analyze_ticker(ticker):
     """
-    Analyzes a single ticker for pump-and-dump patterns.
-    NOW WITH: Annotated markers, two-panel plots, and synergy bonus
+    Main analysis function - now integrated with backtesting
     """
     print(f"\n=== Analyzing {ticker} ===")
 
-    # ============================================
-    # STEP 1: DATA COLLECTION
-    # ============================================
+    # Download data
     df = yf.download(ticker, period="6mo", interval="1d")
 
+    # Updated directory structure
     img_dir = f"data/images/{ticker}"
     os.makedirs(img_dir, exist_ok=True)
 
@@ -24,20 +192,14 @@ def analyze_ticker(ticker):
 
     if df.empty:
         print(f"No data returned for {ticker}. Skipping.")
-        return
+        return None
 
-    # ============================================
-    # STEP 2: FEATURE ENGINEERING
-    # ============================================
-    
-    # Volume features
+    # === FEATURE ENGINEERING ===
     df['vol_z'] = (df['Volume'] - df['Volume'].rolling(20).mean()) / \
                   (df['Volume'].rolling(20).std() + 1e-9)
     df['vol_ratio'] = df['Volume'] / (df['Volume'].rolling(20).mean() + 1e-9)
     df['vol_trend'] = df['Volume'].rolling(5).mean() / \
                       (df['Volume'].rolling(20).mean() + 1e-9)
-
-    # Price features
     df['return'] = df['Close'].pct_change()
     df['price_z'] = (df['return'] - df['return'].rolling(20).mean()) / \
                     (df['return'].rolling(20).std() + 1e-9)
@@ -46,69 +208,45 @@ def analyze_ticker(ticker):
     df['momentum'] = df['Close'].rolling(5).mean() / \
                      (df['Close'].rolling(20).mean() + 1e-9) - 1
 
-    # ============================================
-    # STEP 3: PUMP SCORING SYSTEM (WITH SYNERGY)
-    # ============================================
-    
+    # === PUMP SCORING WITH SYNERGY ===
     df['pump_score'] = 0
-
-    # Volume scoring
     df.loc[df['vol_z'] > 2, 'pump_score'] += 20
     df.loc[df['vol_z'] > 3, 'pump_score'] += 10
     df.loc[df['vol_ratio'] > 3, 'pump_score'] += 15
-
-    # Price scoring
     df.loc[df['return'] > 0.1, 'pump_score'] += 20
     df.loc[df['return'] > 0.2, 'pump_score'] += 10
     df.loc[df['price_z'] > 2, 'pump_score'] += 15
-
-    # Pattern scoring
     df.loc[df['gap_up'] > 0.05, 'pump_score'] += 10
     df.loc[df['volatility'] > 0.1, 'pump_score'] += 10
-
-    # 🆕 SYNERGY BONUS: Volume + Price moving together
-    # This catches coordinated pump behavior
+    
     synergy_condition = (df['vol_trend'] > 1.2) & (df['return'] > 0.1)
     df.loc[synergy_condition, 'pump_score'] += 10
     
-    # Flag as pump if score exceeds threshold
     df['flag'] = df['pump_score'] > 50
 
-    # ============================================
-    # STEP 4: 🆕 TWO-PANEL VISUALIZATION
-    # ============================================
-    
-    # Create figure with 2 subplots (shared x-axis)
+    # === TWO-PANEL VISUALIZATION ===
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), 
                                      sharex=True, 
                                      gridspec_kw={'height_ratios': [2, 1]})
     
-    # --- TOP PANEL: PRICE CHART ---
     ax1.plot(df.index, df['Close'], label="Close Price", 
              linewidth=2, color='#2E86DE')
     ax1.plot(df.index, df['Close'].rolling(20).mean(), 
              label="20-day MA", linestyle='--', alpha=0.7, color='#A29BFE')
 
-    # Get pump signals
     flags = df[df['flag'] == True]
     
-    # 🆕 ANNOTATED MARKERS: Show pump score on each signal
-# Annotated pump markers with staggered labels
     if len(flags) > 0:
-        for i, (idx, row) in enumerate(flags.iterrows()):
-            # Red dot marker
+        for idx, row in flags.iterrows():
             ax1.scatter(idx, row['Close'], marker='o', color='#FF6B6B', 
-                        s=150, zorder=5, edgecolors='darkred', linewidths=2)
+                       s=150, zorder=5, edgecolors='darkred', linewidths=2)
             
-            # Alternate text position (above/below the dot)
-            y_offset = 1.03 if i % 2 == 0 else 0.97
             score_text = f"🚨{int(row['pump_score'])}"
-            ax1.text(idx, row['Close'] * y_offset, score_text, 
-                    fontsize=9, ha='center', 
-                    bbox=dict(boxstyle='round,pad=0.3',
-                            facecolor='red', alpha=0.75, edgecolor='darkred'),
+            ax1.text(idx, row['Close'], score_text, 
+                    fontsize=9, ha='center', va='bottom',
+                    bbox=dict(boxstyle='round,pad=0.3', 
+                             facecolor='red', alpha=0.7, edgecolor='darkred'),
                     color='white', fontweight='bold')
-
 
     ax1.set_title(f"Pump Detection Analysis: {ticker}", 
                   fontsize=15, fontweight='bold', pad=15)
@@ -116,20 +254,13 @@ def analyze_ticker(ticker):
     ax1.legend(loc='upper left', framealpha=0.9)
     ax1.grid(alpha=0.3, linestyle='--')
     
-    # --- BOTTOM PANEL: PUMP SCORE TREND ---
-    # Plot the raw pump score (NOT smoothed for signal integrity)
     ax2.plot(df.index, df['pump_score'], 
              linewidth=2, color='#6C5CE7', label='Pump Score')
-    
-    # Fill area under the curve
     ax2.fill_between(df.index, 0, df['pump_score'], 
                      alpha=0.3, color='#6C5CE7')
-    
-    # Highlight pump threshold line
     ax2.axhline(y=50, color='#FF6B6B', linestyle='--', 
                 linewidth=2, label='Pump Threshold (50)', alpha=0.8)
     
-    # Mark actual pump days with vertical lines
     for idx in flags.index:
         ax2.axvline(x=idx, color='#FF6B6B', alpha=0.3, linewidth=1.5)
     
@@ -143,12 +274,8 @@ def analyze_ticker(ticker):
     plt.savefig(f"{img_dir}/{ticker}_two_panel_analysis.png", dpi=300, bbox_inches='tight')
     plt.close()
 
-    # ============================================
-    # STEP 5: VOLUME CHART (SEPARATE)
-    # ============================================
-    
+    # === VOLUME CHART ===
     df_plot = df[df['Volume'] > 0].copy()
-    
     plt.figure(figsize=(14, 4))
     plt.bar(df_plot.index, df_plot['Volume'], width=1.0, alpha=0.7, color='#00B894')
     plt.yscale("log")
@@ -161,78 +288,179 @@ def analyze_ticker(ticker):
     plt.savefig(f"{img_dir}/{ticker}_volume.png", dpi=300, bbox_inches='tight')
     plt.close()
 
-    # ============================================
-    # STEP 6: SAVE DATA
-    # ============================================
-    
+    # === SAVE SIGNALS CSV (UPDATED PATH) ===
     signals_dir = "data/signals_csv"
     os.makedirs(signals_dir, exist_ok=True)
-    df.reset_index().to_csv(f"{signals_dir}/{ticker}_signals.csv", index=False)
+    df_export = df.reset_index()
+    df_export.to_csv(f"{signals_dir}/{ticker}_signals.csv", index=False)
 
-
-    # ============================================
-    # STEP 7: CONSOLE OUTPUT
-    # ============================================
-    
     print(f"✅ Saved charts to {img_dir}/")
     print(f"✅ Saved data to {signals_dir}/{ticker}_signals.csv")
     
-    if len(flags) > 0:
-        print(f"🚨 Found {len(flags)} pump signal(s):")
-        print(flags[['Close', 'Volume', 'return', 'vol_z', 'pump_score']].to_string())
+    # === RUN BACKTEST ===
+    backtest_df = backtest_signals(ticker, df)
+    
+    if backtest_df is not None and len(backtest_df) > 0:
+        # STEP 2: Auto-classify signals
+        backtest_df = auto_classify_signals(backtest_df)
         
-        # Show synergy detections
-        synergy_flags = flags[synergy_condition.loc[flags.index]]
-        if len(synergy_flags) > 0:
-            print(f"⚡ {len(synergy_flags)} signal(s) had SYNERGY BONUS (vol+price spike)")
+        # Save individual ticker backtest (UPDATED PATH)
+        backtest_df.to_csv(f"{signals_dir}/{ticker}_backtest.csv", index=False)
+        print(f"📊 Backtest results saved to {signals_dir}/{ticker}_backtest.csv")
+        
+        # Show classification breakdown
+        print(f"\n🔍 Signal Classification for {ticker}:")
+        class_counts = backtest_df['classification'].value_counts()
+        for cls, count in class_counts.items():
+            pct = count / len(backtest_df) * 100
+            print(f"  {cls:20s}: {count:2d} ({pct:5.1f}%)")
+        
+        # Show key statistics
+        if len(backtest_df) > 0:
+            avg_ret_20d = backtest_df['return_20d'].mean() * 100
+            avg_max_dd = backtest_df['max_drawdown_20d'].mean() * 100
+            print(f"\n📈 Performance Metrics:")
+            print(f"  Avg 20-day return: {avg_ret_20d:+.2f}%")
+            print(f"  Avg max drawdown:  {avg_max_dd:.2f}%")
     else:
         print("✓ No pump signals detected")
-
-
-def create_summary_report(tickers):
-    """Aggregates pump signals across all tickers."""
-    print("\n" + "="*70)
-    print("CREATING SUMMARY REPORT")
-    print("="*70)
+        backtest_df = None
     
-    all_signals = []
+    return backtest_df
+
+
+def create_master_truth_csv(tickers):
+    """
+    STEP 4: Combine all backtest results into one master CSV
+    
+    This creates the "ground truth" dataset with:
+    - All pump signals
+    - Their features (volume, price, etc.)
+    - Their outcomes (forward returns, drawdowns)
+    - Auto-classifications
+    """
+    print("\n" + "="*80)
+    print("CREATING MASTER TRUTH CSV")
+    print("="*80)
+    
+    signals_dir = "data/signals_csv"
+    all_backtests = []
     
     for ticker in tickers:
-        csv_path = f"data/signals_csv/{ticker}_signals.csv"
+        backtest_path = f"{signals_dir}/{ticker}_backtest.csv"
         
-        if os.path.exists(csv_path):
-            df = pd.read_csv(csv_path)
-            df['ticker'] = ticker
-            flags = df[df['flag'] == True]
-            
-            if len(flags) > 0:
-                all_signals.append(flags)
+        if os.path.exists(backtest_path):
+            df = pd.read_csv(backtest_path)
+            if len(df) > 0:
+                all_backtests.append(df)
     
-    if all_signals:
-        summary = pd.concat(all_signals, ignore_index=True)
-        summary = summary.sort_values('pump_score', ascending=False)
-        summary.to_csv("data/signals_csv/ALL_SIGNALS_SUMMARY.csv", index=False)
-        
-        print("\n🚨 TOP 10 PUMP SIGNALS (Ranked by Score):")
-        print("="*70)
-        
-        top_signals = summary[['ticker', 'Date', 'Close', 'Volume', 
-                               'return', 'vol_z', 'pump_score']].head(10)
-        print(top_signals.to_string(index=False))
-        
-        print(f"\n✅ Full report saved to data/signals_csv/ALL_SIGNALS_SUMMARY.csv")
-        print(f"📊 Total signals found: {len(summary)}")
-        print(f"📊 Tickers with signals: {summary['ticker'].nunique()}")
-        
-        # Show synergy statistics
-        if 'vol_trend' in summary.columns:
-            synergy_count = ((summary['vol_trend'] > 1.2) & (summary['return'] > 0.1)).sum()
-            print(f"⚡ Signals with synergy bonus: {synergy_count} ({synergy_count/len(summary)*100:.1f}%)")
-        
-        return summary
-    else:
-        print("❌ No pump signals found across any tickers.")
+    if not all_backtests:
+        print("❌ No backtest results found.")
         return None
+    
+    # Combine all backtests
+    master = pd.concat(all_backtests, ignore_index=True)
+    
+    # Sort by pump score (highest first)
+    master = master.sort_values('pump_score', ascending=False)
+    
+    # STEP 4: Save master truth CSV (UPDATED PATH)
+    master.to_csv(f"{signals_dir}/MASTER_TRUTH.csv", index=False)
+    
+    print("\n" + "="*80)
+    print("📊 MASTER TRUTH DATASET CREATED")
+    print("="*80)
+    
+    # === OVERALL STATISTICS ===
+    total_signals = len(master)
+    
+    print(f"\n📈 Dataset Overview:")
+    print(f"  Total pump signals: {total_signals}")
+    print(f"  Unique tickers: {master['ticker'].nunique()}")
+    print(f"  Date range: {master['signal_date'].min()} to {master['signal_date'].max()}")
+    
+    # === CLASSIFICATION BREAKDOWN ===
+    print(f"\n🔍 Classification Breakdown:")
+    class_counts = master['classification'].value_counts()
+    for cls, count in class_counts.items():
+        pct = count / total_signals * 100
+        print(f"  {cls:20s}: {count:3d} ({pct:5.1f}%)")
+    
+    # === PERFORMANCE METRICS ===
+    print(f"\n📊 Performance Metrics (All Signals):")
+    
+    # Filter out signals with insufficient data
+    valid_signals = master[master['classification'] != 'insufficient_data']
+    
+    if len(valid_signals) > 0:
+        avg_return_1d = valid_signals['return_1d'].mean() * 100
+        avg_return_5d = valid_signals['return_5d'].mean() * 100
+        avg_return_10d = valid_signals['return_10d'].mean() * 100
+        avg_return_20d = valid_signals['return_20d'].mean() * 100
+        avg_max_drawdown = valid_signals['max_drawdown_20d'].mean() * 100
+        
+        print(f"  Avg return  1-day:  {avg_return_1d:+.2f}%")
+        print(f"  Avg return  5-day:  {avg_return_5d:+.2f}%")
+        print(f"  Avg return 10-day:  {avg_return_10d:+.2f}%")
+        print(f"  Avg return 20-day:  {avg_return_20d:+.2f}%")
+        print(f"  Avg max drawdown:   {avg_max_drawdown:.2f}%")
+    
+    # === PUMP VS LEGIT COMPARISON ===
+    confirmed_pumps = master[master['classification'] == 'confirmed_pump']
+    likely_legit = master[master['classification'] == 'likely_legit']
+    
+    if len(confirmed_pumps) > 0:
+        print(f"\n🚨 Confirmed Pumps (n={len(confirmed_pumps)}):")
+        print(f"  Avg pump score: {confirmed_pumps['pump_score'].mean():.1f}")
+        print(f"  Avg 20d return: {confirmed_pumps['return_20d'].mean()*100:+.2f}%")
+        print(f"  Avg max drawdown: {confirmed_pumps['max_drawdown_20d'].mean()*100:.2f}%")
+    
+    if len(likely_legit) > 0:
+        print(f"\n✅ Likely Legitimate (n={len(likely_legit)}):")
+        print(f"  Avg pump score: {likely_legit['pump_score'].mean():.1f}")
+        print(f"  Avg 20d return: {likely_legit['return_20d'].mean()*100:+.2f}%")
+        print(f"  Avg max drawdown: {likely_legit['max_drawdown_20d'].mean()*100:.2f}%")
+    
+    # === TOP 10 CONFIRMED PUMPS ===
+    if len(confirmed_pumps) > 0:
+        print(f"\n🔥 TOP 10 CONFIRMED PUMPS (Worst Dumps):")
+        print("="*80)
+        top_pumps = confirmed_pumps.nsmallest(10, 'max_drawdown_20d')
+        display_cols = ['ticker', 'signal_date', 'pump_score', 'signal_return', 
+                       'return_20d', 'max_drawdown_20d']
+        print(top_pumps[display_cols].to_string(index=False))
+    
+    # === TOP 10 LIKELY LEGIT ===
+    if len(likely_legit) > 0:
+        print(f"\n✅ TOP 10 LIKELY LEGITIMATE MOVES:")
+        print("="*80)
+        top_legit = likely_legit.nlargest(10, 'return_20d')
+        display_cols = ['ticker', 'signal_date', 'pump_score', 'signal_return', 
+                       'return_20d', 'max_drawdown_20d']
+        print(top_legit[display_cols].to_string(index=False))
+    
+    # === DETECTOR PERFORMANCE ===
+    print(f"\n🎯 Detector Performance:")
+    
+    pump_signals = master[master['classification'].isin(['confirmed_pump', 'likely_pump'])]
+    pump_rate = len(pump_signals) / total_signals * 100
+    
+    print(f"  Pump detection rate: {pump_rate:.1f}%")
+    print(f"  (Goal: >40% for good detector)")
+    
+    if pump_rate > 50:
+        print(f"  ✅ EXCELLENT - Your detector is very accurate!")
+    elif pump_rate > 40:
+        print(f"  ✅ GOOD - Your detector works well")
+    elif pump_rate > 30:
+        print(f"  ⚠️  FAIR - Detector works but could be improved")
+    else:
+        print(f"  ❌ NEEDS WORK - Detector needs tuning")
+    
+    print(f"\n✅ Master truth CSV saved to: {signals_dir}/MASTER_TRUTH.csv")
+    print(f"   {len(master)} total signals with full backtest data")
+    
+    return master
 
 
 # ============================================
@@ -240,21 +468,30 @@ def create_summary_report(tickers):
 # ============================================
 
 if __name__ == "__main__":
-    tickers = ["DFLI", "BYND", "PCSA", "AAPL", "BITF", "CIGL", "NVDA", "SES", "ONMD"]
+    tickers = ["DFLI", "BYND", "PCSA", "BITF", "CIGL", "SES",
+           "MBRX", "PFSA", "ATCH", "XHLD", "VSEE", "MOBX",
+           "AZI", "IPSC", "OPI"]
     
-    print("🚀 Starting Enhanced Pump & Dump Detection System")
-    print("="*70)
-    print("NEW FEATURES:")
-    print("  ✓ Annotated pump score markers (🚨XX)")
-    print("  ✓ Two-panel analysis (Price + Pump Score)")
-    print("  ✓ Synergy bonus detection (Vol + Price together)")
-    print("="*70)
+    print("🚀 Starting Complete Pump Detection System")
+    print("="*80)
+    print("Features:")
+    print("  ✓ Step 1: 20-day forward returns & drawdown metrics")
+    print("  ✓ Step 2: Auto-classification (pump vs legit)")
+    print("  ✓ Step 4: Master truth CSV generation")
+    print("="*80)
     
+    # Analyze each ticker
     for t in tickers:
         analyze_ticker(t)
     
-    summary = create_summary_report(tickers)
+    # Create master truth CSV
+    master = create_master_truth_csv(tickers)
     
-    print("\n" + "="*70)
-    print("✅ ANALYSIS COMPLETE")
-    print("="*70)
+    print("\n" + "="*80)
+    print("✅ COMPLETE ANALYSIS FINISHED")
+    print("="*80)
+    print("\nNext steps:")
+    print("  1. Review data/signals_csv/MASTER_TRUTH.csv")
+    print("  2. Check if pump detection rate is >40%")
+    print("  3. If good: Move to real-time monitoring")
+    print("  4. If needs work: Try threshold tuning (pump_score > 60)")
