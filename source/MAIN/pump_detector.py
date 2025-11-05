@@ -1,6 +1,8 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # Force non-GUI backend
 import matplotlib.pyplot as plt
 import os
 
@@ -173,6 +175,160 @@ def auto_classify_signals(df):
     df['classification'] = df.apply(classify_row, axis=1)
     return df
 
+def detect_pump_episodes(master):
+    """
+    Groups pump signals into "episodes" - coordinated pump campaigns
+    """
+    
+    if master is None or len(master) == 0:
+        return None, None, None
+    
+    print("\n" + "="*80)
+    print("🔍 DETECTING PUMP EPISODES")
+    print("="*80)
+    
+    # Convert signal_date to datetime
+    master['signal_date'] = pd.to_datetime(master['signal_date'])
+    
+    # Sort by ticker and date
+    df = master.sort_values(['ticker', 'signal_date']).copy()
+    
+    # Calculate days since last signal for same ticker
+    df['days_since_last'] = df.groupby('ticker')['signal_date'].diff().dt.days
+    
+    # New episode starts if >7 days since last signal (or first signal for ticker)
+    df['new_episode'] = (df['days_since_last'].isna()) | (df['days_since_last'] > 7)
+    
+    # Assign episode IDs
+    df['episode_id'] = df.groupby('ticker')['new_episode'].cumsum()
+    
+    # Create unique episode identifier
+    df['episode_key'] = df['ticker'] + '_E' + df['episode_id'].astype(str)
+    
+    # Episode statistics
+    episodes = df.groupby('episode_key').agg({
+        'ticker': 'first',
+        'signal_date': ['min', 'max', 'count'],
+        'pump_score': 'mean',
+        'entry_price': 'mean',
+        'max_drawdown_20d': 'mean',
+        'return_20d': 'mean',
+        'classification': lambda x: (x.isin(['confirmed_pump', 'likely_pump'])).sum()
+    })
+    
+    # Flatten columns
+    episodes.columns = ['ticker', 'start_date', 'end_date', 'signal_count', 
+                       'avg_pump_score', 'avg_price', 'avg_drawdown', 
+                       'avg_return_20d', 'pump_count']
+    
+    # Calculate duration
+    episodes['duration_days'] = (episodes['end_date'] - episodes['start_date']).dt.days
+    episodes['episode_pump_rate'] = (episodes['pump_count'] / episodes['signal_count'] * 100)
+    
+    # 🔧 FIX #1: Keep episode_key as a column (don't drop it)
+    episodes = episodes.reset_index()  # Changed from reset_index(drop=True)
+    
+    episodes = episodes.sort_values('pump_count', ascending=False)
+    
+    # 🔧 FIX #3: Ensure directory exists
+    signals_dir = "data/signals_csv"
+    os.makedirs(signals_dir, exist_ok=True)
+    
+    # Save episodes
+    episodes.to_csv(f"{signals_dir}/PUMP_EPISODES.csv", index=False)
+    
+    print(f"\n📊 Episode Summary:")
+    print(f"  Total episodes: {len(episodes)}")
+    print(f"  Single-signal: {(episodes['signal_count'] == 1).sum()}")
+    print(f"  Multi-signal: {(episodes['signal_count'] > 1).sum()}")
+    
+    # Sustained campaigns
+    sustained = episodes[episodes['signal_count'] >= 2]
+    
+    if len(sustained) > 0:
+        print(f"\n🔥 SUSTAINED CAMPAIGNS (2+ signals in 7 days):")
+        print(f"  Found {len(sustained)} campaigns")
+        print(f"  Avg signals per campaign: {sustained['signal_count'].mean():.1f}")
+        print(f"\n📋 TOP 10 SUSTAINED CAMPAIGNS:")
+        print("="*80)
+        display_cols = ['ticker', 'start_date', 'signal_count', 'duration_days', 
+                       'avg_pump_score', 'avg_drawdown', 'pump_count']
+        print(sustained[display_cols].head(10).to_string(index=False))
+    
+    # Ticker frequency
+    ticker_episodes = episodes.groupby('ticker').agg({
+        'episode_key': 'count',
+        'signal_count': 'sum',
+        'pump_count': 'sum',
+        'avg_drawdown': 'mean',
+        'avg_price': 'mean'
+    }).rename(columns={
+        'episode_key': 'total_episodes',
+        'signal_count': 'total_signals',
+        'pump_count': 'total_pumps'
+    })
+    
+    ticker_episodes['pump_rate'] = (ticker_episodes['total_pumps'] / 
+                                    ticker_episodes['total_signals'] * 100)
+    ticker_episodes['is_penny_stock'] = ticker_episodes['avg_price'] < 1.0
+    ticker_episodes = ticker_episodes.sort_values('total_episodes', ascending=False)
+    
+    print(f"\n🎯 TICKER EPISODE FREQUENCY:")
+    print("="*80)
+    print(ticker_episodes.to_string())
+    
+    # High-risk tickers
+    high_risk = ticker_episodes[ticker_episodes['total_episodes'] >= 3]
+    
+    if len(high_risk) > 0:
+        print(f"\n⚠️  HIGH-RISK TICKERS (3+ pump episodes):")
+        print("="*80)
+        print(f"  These tickers are REPEATEDLY targeted!")
+        print()
+        for ticker in high_risk.index:
+            total_eps = high_risk.loc[ticker, 'total_episodes']
+            total_sigs = high_risk.loc[ticker, 'total_signals']
+            pump_rate = high_risk.loc[ticker, 'pump_rate']
+            avg_dd = high_risk.loc[ticker, 'avg_drawdown'] * 100
+            
+            print(f"  🚨 {ticker:6s}: {total_eps} episodes, {total_sigs} signals, "
+                  f"{pump_rate:.0f}% pump rate, avg crash: {avg_dd:.1f}%")
+    
+    # Penny stock analysis
+    penny_episodes = episodes[episodes['avg_price'] < 1.0]
+    large_episodes = episodes[episodes['avg_price'] >= 1.0]
+    
+    print(f"\n💰 PENNY STOCKS vs LARGER STOCKS:")
+    print("="*80)
+    
+    if len(penny_episodes) > 0:
+        penny_pump_pct = (penny_episodes['pump_count'].sum() / 
+                         penny_episodes['signal_count'].sum() * 100)
+        print(f"  Penny stocks (<$1): {len(penny_episodes)} episodes")
+        print(f"    Pump rate: {penny_pump_pct:.1f}%")
+        print(f"    Avg crash: {penny_episodes['avg_drawdown'].mean()*100:.1f}%")
+    
+    if len(large_episodes) > 0:
+        large_pump_pct = (large_episodes['pump_count'].sum() / 
+                         large_episodes['signal_count'].sum() * 100)
+        print(f"\n  Larger stocks (≥$1): {len(large_episodes)} episodes")
+        print(f"    Pump rate: {large_pump_pct:.1f}%")
+        print(f"    Avg crash: {large_episodes['avg_drawdown'].mean()*100:.1f}%")
+    
+    print(f"\n✅ Episode data saved to: {signals_dir}/PUMP_EPISODES.csv")
+    
+    # 🔧 FIX #2: Merge episode_key back to master and return it
+    master_with_episodes = master.merge(
+        df[['ticker', 'signal_date', 'episode_key']],
+        on=['ticker', 'signal_date'],
+        how='left'
+    )
+    
+    # Save enhanced master
+    master_with_episodes.to_csv(f"{signals_dir}/MASTER_TRUTH_WITH_EPISODES.csv", index=False)
+    print(f"✅ Enhanced master CSV saved with episode IDs")
+    
+    return master_with_episodes, episodes, ticker_episodes
 
 def analyze_ticker(ticker):
     """
@@ -471,19 +627,13 @@ def create_master_truth_csv(tickers):
 
 if __name__ == "__main__":
     tickers = [
-    "FEMY","NAKA","MBRX","AGL","CHGG","IXHL","MODD","PSNY","SHOT","IPSC",
-    "AIRE","OPI","NWTN","SGMO","ACET","PPBT","AZI","MOBX","PCSA","CENN",
-    "ARBK","ICCM","LBGJ","PRPL","VRME","ATCH","ORIS","PFSA","HBIO","XHLD",
-    "VSEE","EHGO"
-        ]
-
+        "FEMY","NAKA","MBRX","AGL","CHGG","IXHL","MODD","PSNY","SHOT","IPSC",
+        "AIRE","OPI","NWTN","SGMO","ACET","PPBT","AZI","MOBX","PCSA","CENN",
+        "ARBK","ICCM","LBGJ","PRPL","VRME","ATCH","ORIS","PFSA","HBIO","XHLD",
+        "VSEE","EHGO"
+    ]
     
     print("🚀 Starting Complete Pump Detection System")
-    print("="*80)
-    print("Features:")
-    print("  ✓ Step 1: 20-day forward returns & drawdown metrics")
-    print("  ✓ Step 2: Auto-classification (pump vs legit)")
-    print("  ✓ Step 4: Master truth CSV generation")
     print("="*80)
     
     # Analyze each ticker
@@ -493,8 +643,10 @@ if __name__ == "__main__":
     # Create master truth CSV
     master = create_master_truth_csv(tickers)
     
+    # Detect pump episodes
+    if master is not None:
+        master_with_episodes, episodes, ticker_episodes = detect_pump_episodes(master)
+    
     print("\n" + "="*80)
     print("✅ COMPLETE ANALYSIS FINISHED")
     print("="*80)
-    print("\nNext steps:")
-    print("  3. If good: Move to real-time monitoring")
