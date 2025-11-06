@@ -142,7 +142,7 @@ Your temporal heatmap and chi-square stats show non-uniform clustering.
 
 # 🛠️ Setup
 
-git clone https://github.com/YOUR_USERNAME/Pennystock-Pump-Detector.git
+git clone https://github.com/jasonorjasor/Pennystock-Pump-Detector.git
 
 cd Pennystock-Pump-Detector
 pip install -r requirements.txt
