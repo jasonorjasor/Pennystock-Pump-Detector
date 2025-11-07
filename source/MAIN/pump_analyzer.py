@@ -4,6 +4,22 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import os
 from scipy.stats import chisquare
+RUN_DIR = os.environ.get("RUN_DIR", "runs/LATEST")
+
+# If 'runs/LATEST' doesn't exist, pick the newest run automatically
+if RUN_DIR == "runs/LATEST":
+    base = "runs"
+    if not os.path.isdir(base) or len(os.listdir(base)) == 0:
+        raise FileNotFoundError("❌ No runs found. Run pump_detector.py first.")
+    RUN_DIR = max(
+        [os.path.join(base, d) for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))],
+        key=os.path.getmtime
+    )
+
+print(f"📂 Using run folder: {RUN_DIR}")
+os.makedirs(os.path.join(RUN_DIR, 'data/analysis'), exist_ok=True)
+
+
 
 
 # Create output directory
@@ -17,17 +33,48 @@ print("="*80)
 # LOAD DATA
 # ============================================================================
 
+# ============================================================================
+# LOAD DATA
+# ============================================================================
+
 print("\n📂 Loading data...")
 
-master = pd.read_csv('data/signals_csv/MASTER_TRUTH_WITH_EPISODES.csv')
-episodes = pd.read_csv('data/signals_csv/PUMP_EPISODES.csv')
+signals_dir = os.path.join(RUN_DIR, "data", "signals_csv")
+master_path = os.path.join(signals_dir, "MASTER_TRUTH_WITH_EPISODES.csv")
+episodes_path = os.path.join(signals_dir, "PUMP_EPISODES.csv")
 
-# Convert dates
-master['signal_date'] = pd.to_datetime(master['signal_date'])
-episodes['start_date'] = pd.to_datetime(episodes['start_date'])
-episodes['end_date'] = pd.to_datetime(episodes['end_date'])
+print(f"📂 Signals directory: {signals_dir}")
+print(f"📄 Looking for master: {master_path}")
+print(f"📄 Looking for episodes: {episodes_path}")
 
-print(f"✅ Loaded {len(master)} signals and {len(episodes)} episodes")
+# Check if files exist
+if not os.path.exists(master_path):
+    print(f"\n❌ ERROR: Master file not found!")
+    print(f"   Expected: {master_path}")
+    print(f"   Directory contents:")
+    if os.path.exists(signals_dir):
+        print(f"   {os.listdir(signals_dir)}")
+    else:
+        print(f"   Directory doesn't exist: {signals_dir}")
+    raise FileNotFoundError(f"Master file not found: {master_path}")
+
+if not os.path.exists(episodes_path):
+    raise FileNotFoundError(f"Episodes file not found: {episodes_path}")
+
+master = pd.read_csv(master_path)
+episodes = pd.read_csv(episodes_path)
+
+# ✅ Convert date columns right after reading the CSVs
+# This ensures all date columns are real datetime objects (not strings)
+master['signal_date'] = pd.to_datetime(master['signal_date'], errors='coerce')
+episodes['start_date'] = pd.to_datetime(episodes['start_date'], errors='coerce')
+episodes['end_date']   = pd.to_datetime(episodes['end_date'],   errors='coerce')
+
+# Optional: drop rows where conversion failed (bad or missing dates)
+master = master.dropna(subset=['signal_date'])
+episodes = episodes.dropna(subset=['start_date', 'end_date'])
+
+print(f"✅ Loaded {len(master)} signals and {len(episodes)} episodes (dates converted)")
 
 # ============================================================================
 # SECTION 1: EPISODE PROGRESSION ANALYSIS
@@ -58,6 +105,8 @@ if len(multi_episodes) > 0:
             start_date = episode_signals['signal_date'].min()
             
             for idx, signal in episode_signals.iterrows():
+                # 🔧 FIX: Ensure both are datetime objects
+                signal_date = pd.to_datetime(signal['signal_date'])
                 days_from_start = (signal['signal_date'] - start_date).days
                 
                 progression_data.append({
@@ -122,8 +171,7 @@ if len(multi_episodes) > 0:
     ax2.grid(alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('data/analysis/episode_progression.png', dpi=300, bbox_inches='tight')
-    print("\n✅ Saved: data/analysis/episode_progression.png")
+    plt.savefig(os.path.join(RUN_DIR, 'data/analysis/episode_progression.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 else:
@@ -192,8 +240,8 @@ print("\n📊 Interval Predictability:")
 print(interval_df.to_string(index=False))
 
 # Save to CSV
-interval_df.to_csv('data/analysis/ticker_intervals.csv', index=False)
-print("\n✅ Saved: data/analysis/ticker_intervals.csv")
+interval_df.to_csv(os.path.join(RUN_DIR, 'data/analysis/ticker_intervals.csv'), index=False)
+
 
 # Key findings
 print("\n🎯 KEY FINDINGS:")
@@ -232,8 +280,8 @@ if len(interval_df) > 0:
     ax2.grid(alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('data/analysis/ticker_intervals.png', dpi=300, bbox_inches='tight')
-    print("✅ Saved: data/analysis/ticker_intervals.png")
+    plt.savefig(os.path.join(RUN_DIR, 'data/analysis/ticker_intervals.png'), dpi=300, bbox_inches='tight')
+
     plt.close()
 
 # ============================================================================
@@ -288,8 +336,7 @@ plt.xlabel('Day of Week', fontweight='bold')
 plt.ylabel('Year-Week', fontweight='bold')
 plt.title('Temporal Pump Clustering', fontweight='bold', fontsize=14)
 plt.tight_layout()
-plt.savefig('data/analysis/temporal_heatmap.png', dpi=300, bbox_inches='tight')
-print("\n✅ Saved: data/analysis/temporal_heatmap.png")
+plt.savefig(os.path.join(RUN_DIR, 'data/analysis/temporal_heatmap.png'), dpi=300, bbox_inches='tight')
 plt.close()
 
 # 🔧 FIX: Correct chi-square test
@@ -354,18 +401,12 @@ else:
 summary += f"\n{'='*60}\n"
 
 # Save summary
-with open('data/analysis/summary_stats.txt', 'w', encoding='utf-8') as f:
+with open(os.path.join(RUN_DIR, 'data/analysis/summary_stats.txt'), 'w', encoding='utf-8') as f:
     f.write(summary)
 
 print(summary)
-print("✅ Saved: data/analysis/summary_stats.txt")
+
 
 print("\n" + "="*80)
 print("✅ ANALYSIS COMPLETE")
 print("="*80)
-print("\nGenerated files in data/analysis/:")
-print("  1. episode_progression.png")
-print("  2. ticker_intervals.csv")
-print("  3. ticker_intervals.png")
-print("  4. temporal_heatmap.png")
-print("  5. summary_stats.txt")

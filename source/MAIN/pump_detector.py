@@ -5,6 +5,11 @@ import matplotlib
 matplotlib.use("Agg")  # Force non-GUI backend
 import matplotlib.pyplot as plt
 import os
+from datetime import datetime
+LOOKBACK = os.environ.get("LOOKBACK", "1y")  # '6mo', '1y', etc.
+RUN_NAME = os.environ.get("RUN_NAME", f"{datetime.now():%Y-%m-%d_%H%M}_{LOOKBACK}")
+RUN_DIR  = os.path.join("runs", RUN_NAME)
+os.makedirs(RUN_DIR, exist_ok=True)
 
 def backtest_signals(ticker, df):
     """
@@ -231,11 +236,11 @@ def detect_pump_episodes(master):
     episodes = episodes.sort_values('pump_count', ascending=False)
     
     # 🔧 FIX #3: Ensure directory exists
-    signals_dir = "data/signals_csv"
+    signals_dir = os.path.join(RUN_DIR, "data", "signals_csv")
     os.makedirs(signals_dir, exist_ok=True)
     
     # Save episodes
-    episodes.to_csv(f"{signals_dir}/PUMP_EPISODES.csv", index=False)
+    episodes.to_csv(os.path.join(signals_dir, "PUMP_EPISODES.csv"), index=False)
     
     print(f"\n📊 Episode Summary:")
     print(f"  Total episodes: {len(episodes)}")
@@ -325,9 +330,10 @@ def detect_pump_episodes(master):
     )
     
     # Save enhanced master
-    master_with_episodes.to_csv(f"{signals_dir}/MASTER_TRUTH_WITH_EPISODES.csv", index=False)
-    print(f"✅ Enhanced master CSV saved with episode IDs")
-    
+    master_with_episodes.to_csv(os.path.join(signals_dir, "MASTER_TRUTH_WITH_EPISODES.csv"), index=False)
+
+    print(f"✅ Episode data saved to: {signals_dir}/PUMP_EPISODES.csv")
+    print(f"✅ Enhanced master CSV saved to: {signals_dir}/MASTER_TRUTH_WITH_EPISODES.csv")
     return master_with_episodes, episodes, ticker_episodes
 
 def analyze_ticker(ticker):
@@ -337,10 +343,12 @@ def analyze_ticker(ticker):
     print(f"\n=== Analyzing {ticker} ===")
 
     # Download data
-    df = yf.download(ticker, period="6mo", interval="1d")
+    df = yf.download(ticker, period=LOOKBACK, interval="1d")
+
 
     # Updated directory structure
-    img_dir = f"data/images/{ticker}"
+    img_dir = os.path.join(RUN_DIR, "data/images", ticker)
+
     os.makedirs(img_dir, exist_ok=True)
 
     if isinstance(df.columns, pd.MultiIndex):
@@ -445,7 +453,7 @@ def analyze_ticker(ticker):
     plt.close()
 
     # === SAVE SIGNALS CSV (UPDATED PATH) ===
-    signals_dir = f"data/signals_csv/{ticker}"
+    signals_dir = os.path.join(RUN_DIR, "data/signals_csv", ticker)
     os.makedirs(signals_dir, exist_ok=True)
 
     df_export = df.reset_index()
@@ -501,7 +509,7 @@ def create_master_truth_csv(tickers):
     print("CREATING MASTER TRUTH CSV")
     print("="*80)
     
-    signals_dir = "data/signals_csv"
+    signals_dir = os.path.join(RUN_DIR, "data/signals_csv")
     all_backtests = []
     
     for ticker in tickers:
