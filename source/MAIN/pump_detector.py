@@ -6,7 +6,7 @@ matplotlib.use("Agg")  # Force non-GUI backend
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
-LOOKBACK = os.environ.get("LOOKBACK", "1y")  # '6mo', '1y', etc.
+LOOKBACK = os.environ.get("LOOKBACK", "6mo")  # '6mo', '1y', etc.
 RUN_NAME = os.environ.get("RUN_NAME", f"{datetime.now():%Y-%m-%d_%H%M}_{LOOKBACK}")
 RUN_DIR  = os.path.join("runs", RUN_NAME)
 os.makedirs(RUN_DIR, exist_ok=True)
