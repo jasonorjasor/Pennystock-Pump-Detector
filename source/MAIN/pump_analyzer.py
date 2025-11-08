@@ -10,13 +10,13 @@ RUN_DIR = os.environ.get("RUN_DIR", "runs/LATEST")
 if RUN_DIR == "runs/LATEST":
     base = "runs"
     if not os.path.isdir(base) or len(os.listdir(base)) == 0:
-        raise FileNotFoundError("❌ No runs found. Run pump_detector.py first.")
+        raise FileNotFoundError("No runs found. Run pump_detector.py first.")
     RUN_DIR = max(
         [os.path.join(base, d) for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))],
         key=os.path.getmtime
     )
 
-print(f"📂 Using run folder: {RUN_DIR}")
+print(f"Using run folder: {RUN_DIR}")
 os.makedirs(os.path.join(RUN_DIR, 'data/analysis'), exist_ok=True)
 
 
@@ -26,30 +26,28 @@ os.makedirs(os.path.join(RUN_DIR, 'data/analysis'), exist_ok=True)
 os.makedirs('data/analysis', exist_ok=True)
 
 print("="*80)
-print("🔍 PUMP PATTERN ANALYSIS")
+print("PUMP PATTERN ANALYSIS")
 print("="*80)
 
 # ============================================================================
 # LOAD DATA
 # ============================================================================
 
-# ============================================================================
-# LOAD DATA
-# ============================================================================
 
-print("\n📂 Loading data...")
+
+print("Loading data...")
 
 signals_dir = os.path.join(RUN_DIR, "data", "signals_csv")
 master_path = os.path.join(signals_dir, "MASTER_TRUTH_WITH_EPISODES.csv")
 episodes_path = os.path.join(signals_dir, "PUMP_EPISODES.csv")
 
-print(f"📂 Signals directory: {signals_dir}")
-print(f"📄 Looking for master: {master_path}")
-print(f"📄 Looking for episodes: {episodes_path}")
+print(f" Signals directory: {signals_dir}")
+print(f" Looking for master: {master_path}")
+print(f" Looking for episodes: {episodes_path}")
 
 # Check if files exist
 if not os.path.exists(master_path):
-    print(f"\n❌ ERROR: Master file not found!")
+    print(f"\n ERROR: Master file not found!")
     print(f"   Expected: {master_path}")
     print(f"   Directory contents:")
     if os.path.exists(signals_dir):
@@ -64,7 +62,7 @@ if not os.path.exists(episodes_path):
 master = pd.read_csv(master_path)
 episodes = pd.read_csv(episodes_path)
 
-# ✅ Convert date columns right after reading the CSVs
+# Convert date columns right after reading the CSVs
 # This ensures all date columns are real datetime objects (not strings)
 master['signal_date'] = pd.to_datetime(master['signal_date'], errors='coerce')
 episodes['start_date'] = pd.to_datetime(episodes['start_date'], errors='coerce')
@@ -74,14 +72,14 @@ episodes['end_date']   = pd.to_datetime(episodes['end_date'],   errors='coerce')
 master = master.dropna(subset=['signal_date'])
 episodes = episodes.dropna(subset=['start_date', 'end_date'])
 
-print(f"✅ Loaded {len(master)} signals and {len(episodes)} episodes (dates converted)")
+print(f"Loaded {len(master)} signals and {len(episodes)} episodes (dates converted)")
 
 # ============================================================================
 # SECTION 1: EPISODE PROGRESSION ANALYSIS
 # ============================================================================
 
 print("\n" + "="*80)
-print("📈 SECTION 1: EPISODE PROGRESSION ANALYSIS")
+print("SECTION 1: EPISODE PROGRESSION ANALYSIS")
 print("="*80)
 print("Question: Do pump scores rise BEFORE the price peaks?")
 
@@ -89,7 +87,7 @@ print("Question: Do pump scores rise BEFORE the price peaks?")
 multi_episodes = episodes[episodes['signal_count'] >= 2].copy()
 
 if len(multi_episodes) > 0:
-    print(f"\n🔍 Analyzing {len(multi_episodes)} multi-day campaigns...")
+    print(f"\n Analyzing {len(multi_episodes)} multi-day campaigns...")
     
     progression_data = []
     
@@ -105,7 +103,7 @@ if len(multi_episodes) > 0:
             start_date = episode_signals['signal_date'].min()
             
             for idx, signal in episode_signals.iterrows():
-                # 🔧 FIX: Ensure both are datetime objects
+                
                 signal_date = pd.to_datetime(signal['signal_date'])
                 days_from_start = (signal['signal_date'] - start_date).days
                 
@@ -127,24 +125,24 @@ if len(multi_episodes) > 0:
         'vol_z': 'mean'
     }).reset_index()
     
-    print("\n📊 Average Progression Pattern:")
+    print("\n Average Progression Pattern:")
     print(avg_progression.to_string(index=False))
     
-    # 🔧 FIX: Proper idxmax usage
+    
     if len(avg_progression) >= 2:
         day0_score = avg_progression[avg_progression['day'] == 0]['pump_score'].values[0]
         max_idx = avg_progression['pump_score'].idxmax()
         max_day_num = avg_progression.loc[max_idx, 'day']
         
-        print(f"\n🎯 KEY FINDING:")
+        print(f"\n KEY FINDING:")
         print(f"  Day 0 avg score: {day0_score:.1f}")
         print(f"  Peak score on day: {max_day_num}")
         
         if max_day_num > 0:
-            print(f"  ✅ EARLY WARNING: Scores peak {max_day_num} day(s) after first signal")
+            print(f"    EARLY WARNING: Scores peak {max_day_num} day(s) after first signal")
             print(f"  → Real-time monitoring could provide advance notice")
         else:
-            print(f"  ⚠️  NO EARLY WARNING: Scores peak on first day")
+            print(f"     NO EARLY WARNING: Scores peak on first day")
             print(f"  → Real-time monitoring won't help (too late)")
     
     # Visualization
@@ -175,14 +173,14 @@ if len(multi_episodes) > 0:
     plt.close()
 
 else:
-    print("\n⚠️  No multi-day campaigns found")
+    print("\n No multi-day campaigns found")
 
 # ============================================================================
 # SECTION 2: TICKER INTERVAL ANALYSIS
 # ============================================================================
 
 print("\n" + "="*80)
-print("📅 SECTION 2: TICKER INTERVAL ANALYSIS")
+print("SECTION 2: TICKER INTERVAL ANALYSIS")
 print("="*80)
 print("Question: Do tickers pump on predictable intervals?")
 
@@ -196,7 +194,7 @@ for ticker in high_risk_tickers:
     ticker_episodes = episodes[episodes['ticker'] == ticker].sort_values('start_date')
     
     if len(ticker_episodes) >= 2:
-        # 🔧 FIX: Calculate BOTH interval types
+        
         end_to_start_intervals = []
         start_to_start_intervals = []
         
@@ -236,7 +234,7 @@ for ticker in high_risk_tickers:
 interval_df = pd.DataFrame(interval_analysis)
 interval_df = interval_df.sort_values('coefficient_variation')
 
-print("\n📊 Interval Predictability:")
+print("\n Interval Predictability:")
 print(interval_df.to_string(index=False))
 
 # Save to CSV
@@ -244,15 +242,15 @@ interval_df.to_csv(os.path.join(RUN_DIR, 'data/analysis/ticker_intervals.csv'), 
 
 
 # Key findings
-print("\n🎯 KEY FINDINGS:")
+print("\n KEY FINDINGS:")
 highly_predictable = interval_df[interval_df['predictability'] == 'HIGH']
 if len(highly_predictable) > 0:
-    print(f"\n✅ {len(highly_predictable)} ticker(s) have PREDICTABLE pump cycles:")
+    print(f"\n {len(highly_predictable)} ticker(s) have PREDICTABLE pump cycles:")
     for _, row in highly_predictable.iterrows():
         print(f"  {row['ticker']:6s}: Pumps every ~{row['avg_cycle_days']:.0f} days "
               f"(~{row['avg_gap_days']:.0f} day gap, next: {row['predicted_next']})")
 else:
-    print("\n⚠️  No tickers show highly predictable patterns")
+    print("\n  No tickers show highly predictable patterns")
 
 # Visualization
 if len(interval_df) > 0:
@@ -289,14 +287,14 @@ if len(interval_df) > 0:
 # ============================================================================
 
 print("\n" + "="*80)
-print("📆 SECTION 3: TEMPORAL PATTERNS")
+print("SECTION 3: TEMPORAL PATTERNS")
 print("="*80)
 print("Question: Do pumps cluster on certain days/months?")
 
 # Add temporal features
 master['day_of_week'] = master['signal_date'].dt.day_name()
 master['month'] = master['signal_date'].dt.month_name()
-# 🔧 FIX: Use year-week to avoid merging across years
+
 master['year_week'] = master['signal_date'].dt.strftime('%Y-W%U')
 
 # Only confirmed/likely pumps
@@ -307,7 +305,7 @@ dow_counts = pumps_only['day_of_week'].value_counts()
 dow_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 dow_counts = dow_counts.reindex(dow_order, fill_value=0)
 
-print("\n📊 Pumps by Day of Week:")
+print("\n Pumps by Day of Week:")
 for day, count in dow_counts.items():
     pct = count / dow_counts.sum() * 100
     bar = '█' * int(pct / 2)
@@ -316,7 +314,7 @@ for day, count in dow_counts.items():
 # Monthly analysis
 month_counts = pumps_only['month'].value_counts()
 
-print("\n📊 Pumps by Month:")
+print("\n Pumps by Month:")
 for month, count in month_counts.items():
     pct = count / month_counts.sum() * 100
     bar = '█' * int(pct / 2)
@@ -339,7 +337,7 @@ plt.tight_layout()
 plt.savefig(os.path.join(RUN_DIR, 'data/analysis/temporal_heatmap.png'), dpi=300, bbox_inches='tight')
 plt.close()
 
-# 🔧 FIX: Correct chi-square test
+
 total_pumps = dow_counts.sum()
 expected_per_day = total_pumps / 5
 chi2, p_value = chisquare(dow_counts.values, f_exp=[expected_per_day] * 5)
@@ -347,11 +345,11 @@ chi2, p_value = chisquare(dow_counts.values, f_exp=[expected_per_day] * 5)
 print(f"\n🎯 Statistical Test:")
 print(f"  Chi-square test for uniform distribution: p = {p_value:.4f}")
 if p_value < 0.05:
-    print(f"  ✅ SIGNIFICANT: Pumps are NOT uniformly distributed")
+    print(f"    SIGNIFICANT: Pumps are NOT uniformly distributed")
     max_day = dow_counts.idxmax()
     print(f"  → {max_day} has significantly more pumps ({dow_counts[max_day]} vs expected {expected_per_day:.1f})")
 else:
-    print(f"  ⚠️  NOT SIGNIFICANT: Pumps appear randomly distributed")
+    print(f"    NOT SIGNIFICANT: Pumps appear randomly distributed")
     print(f"  → No clear day-of-week pattern")
 
 # ============================================================================
@@ -359,7 +357,7 @@ else:
 # ============================================================================
 
 print("\n" + "="*80)
-print("📝 GENERATING SUMMARY STATISTICS")
+print("GENERATING SUMMARY STATISTICS")
 print("="*80)
 
 summary = f"""
@@ -389,14 +387,14 @@ if len(highly_predictable) > 0:
     for _, row in highly_predictable.iterrows():
         summary += f"  - {row['ticker']}: Every ~{row['avg_cycle_days']:.0f} days (next: {row['predicted_next']})\n"
 else:
-    summary += "\n⚠️  No tickers show predictable timing patterns\n"
+    summary += "\n  No tickers show predictable timing patterns\n"
 
 # Add temporal findings
 if p_value < 0.05:
     max_day = dow_counts.idxmax()
-    summary += f"\n✅ Pumps cluster on {max_day}s ({dow_counts[max_day]} occurrences, p={p_value:.4f})\n"
+    summary += f"\n Pumps cluster on {max_day}s ({dow_counts[max_day]} occurrences, p={p_value:.4f})\n"
 else:
-    summary += f"\n⚠️  Pumps are evenly distributed across weekdays (p={p_value:.4f})\n"
+    summary += f"\n  Pumps are evenly distributed across weekdays (p={p_value:.4f})\n"
 
 summary += f"\n{'='*60}\n"
 
@@ -408,5 +406,5 @@ print(summary)
 
 
 print("\n" + "="*80)
-print("✅ ANALYSIS COMPLETE")
+print("ANALYSIS COMPLETE")
 print("="*80)

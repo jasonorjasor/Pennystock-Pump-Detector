@@ -6,7 +6,7 @@ matplotlib.use("Agg")  # Force non-GUI backend
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
-LOOKBACK = os.environ.get("LOOKBACK", "6mo")  # '6mo', '1y', etc.
+LOOKBACK = os.environ.get("LOOKBACK", "1y")  # '6mo', '1y', etc.
 RUN_NAME = os.environ.get("RUN_NAME", f"{datetime.now():%Y-%m-%d_%H%M}_{LOOKBACK}")
 RUN_DIR  = os.path.join("runs", RUN_NAME)
 os.makedirs(RUN_DIR, exist_ok=True)
@@ -230,19 +230,19 @@ def detect_pump_episodes(master):
     episodes['duration_days'] = (episodes['end_date'] - episodes['start_date']).dt.days
     episodes['episode_pump_rate'] = (episodes['pump_count'] / episodes['signal_count'] * 100)
     
-    # 🔧 FIX #1: Keep episode_key as a column (don't drop it)
+    # Keep episode_key as a column (don't drop it)
     episodes = episodes.reset_index()  # Changed from reset_index(drop=True)
     
     episodes = episodes.sort_values('pump_count', ascending=False)
     
-    # 🔧 FIX #3: Ensure directory exists
+    # Ensure directory exists
     signals_dir = os.path.join(RUN_DIR, "data", "signals_csv")
     os.makedirs(signals_dir, exist_ok=True)
     
     # Save episodes
     episodes.to_csv(os.path.join(signals_dir, "PUMP_EPISODES.csv"), index=False)
     
-    print(f"\n📊 Episode Summary:")
+    print(f"\n Episode Summary:")
     print(f"  Total episodes: {len(episodes)}")
     print(f"  Single-signal: {(episodes['signal_count'] == 1).sum()}")
     print(f"  Multi-signal: {(episodes['signal_count'] > 1).sum()}")
@@ -251,10 +251,10 @@ def detect_pump_episodes(master):
     sustained = episodes[episodes['signal_count'] >= 2]
     
     if len(sustained) > 0:
-        print(f"\n🔥 SUSTAINED CAMPAIGNS (2+ signals in 7 days):")
+        print(f"\n SUSTAINED CAMPAIGNS (2+ signals in 7 days):")
         print(f"  Found {len(sustained)} campaigns")
         print(f"  Avg signals per campaign: {sustained['signal_count'].mean():.1f}")
-        print(f"\n📋 TOP 10 SUSTAINED CAMPAIGNS:")
+        print(f"\n TOP 10 SUSTAINED CAMPAIGNS:")
         print("="*80)
         display_cols = ['ticker', 'start_date', 'signal_count', 'duration_days', 
                        'avg_pump_score', 'avg_drawdown', 'pump_count']
@@ -278,7 +278,7 @@ def detect_pump_episodes(master):
     ticker_episodes['is_penny_stock'] = ticker_episodes['avg_price'] < 1.0
     ticker_episodes = ticker_episodes.sort_values('total_episodes', ascending=False)
     
-    print(f"\n🎯 TICKER EPISODE FREQUENCY:")
+    print(f"\n TICKER EPISODE FREQUENCY:")
     print("="*80)
     print(ticker_episodes.to_string())
     
@@ -286,7 +286,7 @@ def detect_pump_episodes(master):
     high_risk = ticker_episodes[ticker_episodes['total_episodes'] >= 3]
     
     if len(high_risk) > 0:
-        print(f"\n⚠️  HIGH-RISK TICKERS (3+ pump episodes):")
+        print(f"\n  HIGH-RISK TICKERS (3+ pump episodes):")
         print("="*80)
         print(f"  These tickers are REPEATEDLY targeted!")
         print()
@@ -303,7 +303,7 @@ def detect_pump_episodes(master):
     penny_episodes = episodes[episodes['avg_price'] < 1.0]
     large_episodes = episodes[episodes['avg_price'] >= 1.0]
     
-    print(f"\n💰 PENNY STOCKS vs LARGER STOCKS:")
+    print(f"\n PENNY STOCKS vs LARGER STOCKS:")
     print("="*80)
     
     if len(penny_episodes) > 0:
@@ -320,9 +320,9 @@ def detect_pump_episodes(master):
         print(f"    Pump rate: {large_pump_pct:.1f}%")
         print(f"    Avg crash: {large_episodes['avg_drawdown'].mean()*100:.1f}%")
     
-    print(f"\n✅ Episode data saved to: {signals_dir}/PUMP_EPISODES.csv")
+    print(f"\n Episode data saved to: {signals_dir}/PUMP_EPISODES.csv")
     
-    # 🔧 FIX #2: Merge episode_key back to master and return it
+    #
     master_with_episodes = master.merge(
         df[['ticker', 'signal_date', 'episode_key']],
         on=['ticker', 'signal_date'],
@@ -332,8 +332,7 @@ def detect_pump_episodes(master):
     # Save enhanced master
     master_with_episodes.to_csv(os.path.join(signals_dir, "MASTER_TRUTH_WITH_EPISODES.csv"), index=False)
 
-    print(f"✅ Episode data saved to: {signals_dir}/PUMP_EPISODES.csv")
-    print(f"✅ Enhanced master CSV saved to: {signals_dir}/MASTER_TRUTH_WITH_EPISODES.csv")
+
     return master_with_episodes, episodes, ticker_episodes
 
 def analyze_ticker(ticker):
@@ -403,7 +402,7 @@ def analyze_ticker(ticker):
     if len(flags) > 0:
         for idx, row in flags.iterrows():
             ax1.scatter(idx, row['Close'], marker='o', color='#FF6B6B', 
-                       s=150, zorder=5, edgecolors='darkred', linewidths=2)
+                       s=50, zorder=5, edgecolors='darkred', linewidths=2)
             
             score_text = f"🚨{int(row['pump_score'])}"
             ax1.text(idx, row['Close'], score_text, 
@@ -460,8 +459,7 @@ def analyze_ticker(ticker):
     df_export.to_csv(f"{signals_dir}/signals.csv", index=False)
 
 
-    print(f"✅ Saved charts to {img_dir}/")
-    print(f"✅ Saved data to {signals_dir}/{ticker}_signals.csv")
+
     
     # === RUN BACKTEST ===
     backtest_df = backtest_signals(ticker, df)
@@ -472,10 +470,10 @@ def analyze_ticker(ticker):
         
         # Save individual ticker backtest (UPDATED PATH)
         backtest_df.to_csv(f"{signals_dir}/backtest.csv", index=False)
-        print(f"📊 Backtest results saved to {signals_dir}/{ticker}_backtest.csv")
+        print(f"Backtest results saved to {signals_dir}/{ticker}_backtest.csv")
         
         # Show classification breakdown
-        print(f"\n🔍 Signal Classification for {ticker}:")
+        print(f"\n Signal Classification for {ticker}:")
         class_counts = backtest_df['classification'].value_counts()
         for cls, count in class_counts.items():
             pct = count / len(backtest_df) * 100
@@ -485,7 +483,7 @@ def analyze_ticker(ticker):
         if len(backtest_df) > 0:
             avg_ret_20d = backtest_df['return_20d'].mean() * 100
             avg_max_dd = backtest_df['max_drawdown_20d'].mean() * 100
-            print(f"\n📈 Performance Metrics:")
+            print(f"\n Performance Metrics:")
             print(f"  Avg 20-day return: {avg_ret_20d:+.2f}%")
             print(f"  Avg max drawdown:  {avg_max_dd:.2f}%")
     else:
@@ -505,9 +503,6 @@ def create_master_truth_csv(tickers):
     - Their outcomes (forward returns, drawdowns)
     - Auto-classifications
     """
-    print("\n" + "="*80)
-    print("CREATING MASTER TRUTH CSV")
-    print("="*80)
     
     signals_dir = os.path.join(RUN_DIR, "data/signals_csv")
     all_backtests = []
@@ -521,7 +516,7 @@ def create_master_truth_csv(tickers):
                 all_backtests.append(df)
     
     if not all_backtests:
-        print("❌ No backtest results found.")
+        print("No backtest results found.")
         return None
     
     # Combine all backtests
@@ -533,27 +528,27 @@ def create_master_truth_csv(tickers):
     # STEP 4: Save master truth CSV (UPDATED PATH)
     master.to_csv(f"{signals_dir}/MASTER_TRUTH.csv", index=False)
     
-    print("\n" + "="*80)
-    print("📊 MASTER TRUTH DATASET CREATED")
-    print("="*80)
+
+    print("MASTER TRUTH DATASET CREATED")
+
     
     # === OVERALL STATISTICS ===
     total_signals = len(master)
     
-    print(f"\n📈 Dataset Overview:")
+    print(f"\n Dataset Overview:")
     print(f"  Total pump signals: {total_signals}")
     print(f"  Unique tickers: {master['ticker'].nunique()}")
     print(f"  Date range: {master['signal_date'].min()} to {master['signal_date'].max()}")
     
     # === CLASSIFICATION BREAKDOWN ===
-    print(f"\n🔍 Classification Breakdown:")
+    print(f"\n Classification Breakdown:")
     class_counts = master['classification'].value_counts()
     for cls, count in class_counts.items():
         pct = count / total_signals * 100
         print(f"  {cls:20s}: {count:3d} ({pct:5.1f}%)")
     
     # === PERFORMANCE METRICS ===
-    print(f"\n📊 Performance Metrics (All Signals):")
+    print(f"\n Performance Metrics (All Signals):")
     
     # Filter out signals with insufficient data
     valid_signals = master[master['classification'] != 'insufficient_data']
@@ -576,20 +571,20 @@ def create_master_truth_csv(tickers):
     likely_legit = master[master['classification'] == 'likely_legit']
     
     if len(confirmed_pumps) > 0:
-        print(f"\n🚨 Confirmed Pumps (n={len(confirmed_pumps)}):")
+        print(f"\n Confirmed Pumps (n={len(confirmed_pumps)}):")
         print(f"  Avg pump score: {confirmed_pumps['pump_score'].mean():.1f}")
         print(f"  Avg 20d return: {confirmed_pumps['return_20d'].mean()*100:+.2f}%")
         print(f"  Avg max drawdown: {confirmed_pumps['max_drawdown_20d'].mean()*100:.2f}%")
     
     if len(likely_legit) > 0:
-        print(f"\n✅ Likely Legitimate (n={len(likely_legit)}):")
+        print(f"\n Likely Legitimate (n={len(likely_legit)}):")
         print(f"  Avg pump score: {likely_legit['pump_score'].mean():.1f}")
         print(f"  Avg 20d return: {likely_legit['return_20d'].mean()*100:+.2f}%")
         print(f"  Avg max drawdown: {likely_legit['max_drawdown_20d'].mean()*100:.2f}%")
     
     # === TOP 10 CONFIRMED PUMPS ===
     if len(confirmed_pumps) > 0:
-        print(f"\n🔥 TOP 10 CONFIRMED PUMPS (Worst Dumps):")
+        print(f"\n TOP 10 CONFIRMED PUMPS (Worst Dumps):")
         print("="*80)
         top_pumps = confirmed_pumps.nsmallest(10, 'max_drawdown_20d')
         display_cols = ['ticker', 'signal_date', 'pump_score', 'signal_return', 
@@ -598,7 +593,7 @@ def create_master_truth_csv(tickers):
     
     # === TOP 10 LIKELY LEGIT ===
     if len(likely_legit) > 0:
-        print(f"\n✅ TOP 10 LIKELY LEGITIMATE MOVES:")
+        print(f"\n TOP 10 LIKELY LEGITIMATE MOVES:")
         print("="*80)
         top_legit = likely_legit.nlargest(10, 'return_20d')
         display_cols = ['ticker', 'signal_date', 'pump_score', 'signal_return', 
@@ -606,7 +601,7 @@ def create_master_truth_csv(tickers):
         print(top_legit[display_cols].to_string(index=False))
     
     # === DETECTOR PERFORMANCE ===
-    print(f"\n🎯 Detector Performance:")
+    print(f"\n Detector Performance:")
     
     pump_signals = master[master['classification'].isin(['confirmed_pump', 'likely_pump'])]
     pump_rate = len(pump_signals) / total_signals * 100
@@ -615,15 +610,15 @@ def create_master_truth_csv(tickers):
     print(f"  (Goal: >40% for good detector)")
     
     if pump_rate > 50:
-        print(f"  ✅ EXCELLENT - Your detector is very accurate!")
+        print(f"   EXCELLENT - Your detector is very accurate!")
     elif pump_rate > 40:
-        print(f"  ✅ GOOD - Your detector works well")
+        print(f"   GOOD - Your detector works well")
     elif pump_rate > 30:
-        print(f"  ⚠️  FAIR - Detector works but could be improved")
+        print(f"   FAIR - Detector works but could be improved")
     else:
-        print(f"  ❌ NEEDS WORK - Detector needs tuning")
+        print(f"   NEEDS WORK - Detector needs tuning")
     
-    print(f"\n✅ Master truth CSV saved to: {signals_dir}/MASTER_TRUTH.csv")
+
     print(f"   {len(master)} total signals with full backtest data")
     
     return master
@@ -641,7 +636,7 @@ if __name__ == "__main__":
         "VSEE","EHGO"
     ]
     
-    print("🚀 Starting Complete Pump Detection System")
+    print("Starting Complete Pump Detection System")
     print("="*80)
     
     # Analyze each ticker
@@ -656,5 +651,5 @@ if __name__ == "__main__":
         master_with_episodes, episodes, ticker_episodes = detect_pump_episodes(master)
     
     print("\n" + "="*80)
-    print("✅ COMPLETE ANALYSIS FINISHED")
+    print("COMPLETE ANALYSIS FINISHED")
     print("="*80)

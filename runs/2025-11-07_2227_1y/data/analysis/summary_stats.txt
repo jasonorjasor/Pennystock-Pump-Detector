@@ -1,0 +1,27 @@
+
+PUMP DETECTION SYSTEM - ANALYSIS SUMMARY
+Generated: 2025-11-07 22:29:10
+
+============================================================
+OVERALL STATISTICS
+============================================================
+Total signals detected: 349
+Confirmed pumps: 119
+Likely pumps: 118
+Pump detection rate: 67.9%
+
+Total episodes: 220
+Multi-day campaigns: 77
+Single-day pumps: 143
+
+============================================================
+TOP FINDINGS
+============================================================
+
+✅ 2 ticker(s) show PREDICTABLE pump cycles:
+  - AGL: Every ~93 days (next: 2026-01-14)
+  - XHLD: Every ~37 days (next: 2025-12-02)
+
+  Pumps are evenly distributed across weekdays (p=0.6195)
+
+============================================================
