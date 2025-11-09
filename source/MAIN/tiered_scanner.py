@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 import os
 import glob
 
-# ============================================================================ 
+# ============================================================================
 # CONFIGURATION
-# ============================================================================ 
+# ============================================================================
 
 # Find the most recent run directory
 def find_latest_run():
@@ -24,11 +24,11 @@ print(f"Using data from: {LATEST_RUN}")
 INTERVALS_PATH = os.path.join(LATEST_RUN, "data", "analysis", "ticker_intervals.csv")
 MASTER_PATH    = os.path.join(LATEST_RUN, "data", "signals_csv", "MASTER_TRUTH_WITH_EPISODES.csv")
 
-# NEW: alerts directory within the run
+# Alerts directory within the run
 ALERTS_DIR = os.path.join(LATEST_RUN, "data", "alerts")
 os.makedirs(ALERTS_DIR, exist_ok=True)
 
-# NEW: file locations now live under the run
+# File locations under the run
 ALERTS_HISTORY_FILE = os.path.join(ALERTS_DIR, "alerts_history.csv")  # master log of all alerts
 
 TIER1_MIN_EPISODES = 8  # Daily monitoring
@@ -39,9 +39,9 @@ print("="*80)
 print("TIERED PUMP MONITORING SYSTEM")
 print("="*80)
 
-# ============================================================================ 
+# ============================================================================
 # LOAD HISTORICAL DATA
-# ============================================================================ 
+# ============================================================================
 
 if not os.path.exists(INTERVALS_PATH):
     raise FileNotFoundError(f"Intervals file not found: {INTERVALS_PATH}")
@@ -52,9 +52,9 @@ intervals_df = pd.read_csv(INTERVALS_PATH)
 master_df = pd.read_csv(MASTER_PATH)
 master_df['signal_date'] = pd.to_datetime(master_df['signal_date'])
 
-# ============================================================================ 
+# ============================================================================
 # TIER ASSIGNMENT
-# ============================================================================ 
+# ============================================================================
 
 def assign_tiers(intervals_df):
     tiers = {'tier1': [], 'tier2': [], 'tier3': []}
@@ -84,9 +84,9 @@ for ticker in sorted(tiers['tier1']):
     print(f"  {ticker:6s}: {row['num_episodes']:2.0f} episodes, "
           f"{row['avg_gap_days']:5.1f}d avg, CV={row['coefficient_variation']:.2f}")
 
-# ============================================================================ 
+# ============================================================================
 # LAST PUMP TRACKING
-# ============================================================================ 
+# ============================================================================
 
 def get_last_pump_date(ticker, master_df):
     ticker_pumps = master_df[
@@ -97,9 +97,9 @@ def get_last_pump_date(ticker, master_df):
 
 last_pump_dates = {t: get_last_pump_date(t, master_df) for t in intervals_df['ticker']}
 
-# ============================================================================ 
+# ============================================================================
 # SCORING
-# ============================================================================ 
+# ============================================================================
 
 def calculate_pump_score(ticker_data):
     df = ticker_data.copy()
@@ -128,9 +128,9 @@ def calculate_pump_score(ticker_data):
     df.loc[synergy, 'pump_score'] += 10
     return df
 
-# ============================================================================ 
+# ============================================================================
 # MONITORING
-# ============================================================================ 
+# ============================================================================
 
 def check_ticker(ticker, tier, last_pump_date, avg_gap):
     try:
@@ -176,9 +176,9 @@ def check_ticker(ticker, tier, last_pump_date, avg_gap):
         print(f"  Error checking {ticker}: {e}")
         return None
 
-# ============================================================================ 
+# ============================================================================
 # SCAN EXECUTION
-# ============================================================================ 
+# ============================================================================
 
 def run_scan(tiers_to_check):
     print("\n" + "="*80)
@@ -201,16 +201,17 @@ def run_scan(tiers_to_check):
             alert = check_ticker(ticker, tier_name, last_pump, avg_gap)
             if alert:
                 alerts.append(alert)
-                print(f"🚨 PUMP DETECTED (score={alert['pump_score']:.0f}, {alert['status']})")
+                print(f"PUMP DETECTED (score={alert['pump_score']:.0f}, {alert['status']})")
             else:
-                print("✓ OK")
+                print("OK")
     return alerts
 
-# ============================================================================ 
+# ============================================================================
 # ALERT LOGGING & REPORTING
-# ============================================================================ 
+# ============================================================================
 
 def log_alerts_to_history(alerts):
+    """Append new alerts to master history file"""
     if len(alerts) == 0:
         return
 
@@ -237,16 +238,15 @@ def log_alerts_to_history(alerts):
     history_df.to_csv(ALERTS_HISTORY_FILE, index=False)
     print(f"\nAlerts logged to {ALERTS_HISTORY_FILE}")
 
-
 def generate_alert_report(alerts):
     if len(alerts) == 0:
         print("\n" + "="*80)
-        print("✓ NO PUMPS DETECTED")
+        print("NO PUMPS DETECTED")
         print("="*80)
         return
 
     print("\n" + "="*80)
-    print(f"🚨 PUMP ALERTS ({len(alerts)} detected)")
+    print(f"PUMP ALERTS ({len(alerts)} detected)")
     print("="*80)
 
     alerts = sorted(alerts, key=lambda x: x['pump_score'], reverse=True)
@@ -266,10 +266,9 @@ def generate_alert_report(alerts):
     alerts_df.to_csv(out_file, index=False)
     print(f"\nToday's alerts saved to: {out_file}")
 
-
-# ============================================================================ 
+# ============================================================================
 # MAIN EXECUTION
-# ============================================================================ 
+# ============================================================================
 
 if __name__ == "__main__":
     today = datetime.now()
@@ -278,15 +277,16 @@ if __name__ == "__main__":
 
     if day_of_week in ['Monday', 'Wednesday', 'Friday']:
         tiers_to_check = ['tier1', 'tier2']
-        print("   → Checking Tier 1 (Daily) + Tier 2 (Weekly)")
+        print("Checking Tier 1 (Daily) and Tier 2 (Weekly)")
     else:
         tiers_to_check = ['tier1']
-        print("   → Checking Tier 1 (Daily) only")
+        print("Checking Tier 1 (Daily) only")
 
     alerts = run_scan(tiers_to_check)
     generate_alert_report(alerts)
-    log_alerts_to_history(alerts)  # ← NEW: Log to master history
+    log_alerts_to_history(alerts)
 
     print("\n" + "="*80)
     print("SCAN COMPLETE")
     print("="*80)
+    print("\nNext step: Run 'python alert_tracker.py' to check outcomes")
