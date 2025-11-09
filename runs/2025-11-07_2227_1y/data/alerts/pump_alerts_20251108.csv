@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,outcome
+FEMY,tier1,2025-11-07,65.0,1.0399999618530273,15288400.0,0.009049839599583552,0.331626040619992,32,OVERDUE,pending
+PRPL,tier1,2025-11-07,55.0,0.8299999833106995,1275200.0,1.06501734568027,0.18571428206502172,107,OVERDUE,pending

@@ -9,25 +9,27 @@ import glob
 # CONFIGURATION
 # ============================================================================ 
 
-
+# Find the most recent run directory
 def find_latest_run():
-    # find all subdirs under runs/, ignore a static 'LATEST' folder if present
-    candidates = [
-        d for d in glob.glob("runs/*/")
-        if os.path.isdir(d) and os.path.basename(os.path.normpath(d)) != "LATEST"
-    ]
-    if not candidates:
-        raise FileNotFoundError(
-            "No timestamped run directories found in runs/. "
-            "Run pump_detector.py and pump_analyzer.py first."
-        )
-    return max(candidates, key=os.path.getmtime)
+    run_dirs = glob.glob("runs/*/")
+    if not run_dirs:
+        raise FileNotFoundError("No run directories found in runs/")
+    latest = max(run_dirs, key=os.path.getmtime)
+    return os.path.normpath(latest)  # normalize to avoid trailing slash issues
 
-RUN_DIR = find_latest_run()
-print(f"Using data from: {RUN_DIR}")
+LATEST_RUN = find_latest_run()
+print(f"Using data from: {LATEST_RUN}")
 
-INTERVALS_PATH = os.path.join(RUN_DIR, "data", "analysis", "ticker_intervals.csv")
-MASTER_PATH    = os.path.join(RUN_DIR, "data", "signals_csv", "MASTER_TRUTH_WITH_EPISODES.csv")
+# Existing inputs:
+INTERVALS_PATH = os.path.join(LATEST_RUN, "data", "analysis", "ticker_intervals.csv")
+MASTER_PATH    = os.path.join(LATEST_RUN, "data", "signals_csv", "MASTER_TRUTH_WITH_EPISODES.csv")
+
+# NEW: alerts directory within the run
+ALERTS_DIR = os.path.join(LATEST_RUN, "data", "alerts")
+os.makedirs(ALERTS_DIR, exist_ok=True)
+
+# NEW: file locations now live under the run
+ALERTS_HISTORY_FILE = os.path.join(ALERTS_DIR, "alerts_history.csv")  # master log of all alerts
 
 TIER1_MIN_EPISODES = 8  # Daily monitoring
 TIER2_MIN_EPISODES = 6  # Weekly monitoring
@@ -159,14 +161,15 @@ def check_ticker(ticker, tier, last_pump_date, avg_gap):
             return {
                 'ticker': ticker,
                 'tier': tier,
-                'date': latest_date.strftime('%Y-%m-%d'),
+                'alert_date': latest_date,
                 'pump_score': latest['pump_score'],
-                'close': latest['Close'],
+                'alert_price': latest['Close'],
                 'volume': latest['Volume'],
                 'vol_z': latest['vol_z'],
-                'return': latest['return'],
+                'daily_return': latest['return'],
                 'days_since_last': days_since_last,
-                'status': status
+                'status': status,
+                'outcome': 'pending'  # Will be updated by tracker
             }
         return None
     except Exception as e:
@@ -198,44 +201,71 @@ def run_scan(tiers_to_check):
             alert = check_ticker(ticker, tier_name, last_pump, avg_gap)
             if alert:
                 alerts.append(alert)
-                print(f"PUMP DETECTED (score={alert['pump_score']:.0f}, {alert['status']})")
+                print(f"🚨 PUMP DETECTED (score={alert['pump_score']:.0f}, {alert['status']})")
             else:
-                print("OK")
+                print("✓ OK")
     return alerts
 
 # ============================================================================ 
-# ALERT REPORTING
+# ALERT LOGGING & REPORTING
 # ============================================================================ 
+
+def log_alerts_to_history(alerts):
+    if len(alerts) == 0:
+        return
+
+    new_alerts_df = pd.DataFrame(alerts)
+
+    if os.path.exists(ALERTS_HISTORY_FILE):
+        history_df = pd.read_csv(ALERTS_HISTORY_FILE)
+        history_df['alert_date'] = pd.to_datetime(history_df['alert_date'])
+
+        new_alerts_df['alert_date'] = pd.to_datetime(new_alerts_df['alert_date'])
+        for _, new_alert in new_alerts_df.iterrows():
+            ticker = new_alert['ticker']
+            date   = new_alert['alert_date']
+
+            duplicate = history_df[
+                (history_df['ticker'] == ticker) &
+                (history_df['alert_date'] == date)
+            ]
+            if len(duplicate) == 0:
+                history_df = pd.concat([history_df, pd.DataFrame([new_alert])], ignore_index=True)
+    else:
+        history_df = new_alerts_df
+
+    history_df.to_csv(ALERTS_HISTORY_FILE, index=False)
+    print(f"\nAlerts logged to {ALERTS_HISTORY_FILE}")
+
 
 def generate_alert_report(alerts):
     if len(alerts) == 0:
         print("\n" + "="*80)
-        print("NO PUMPS DETECTED")
+        print("✓ NO PUMPS DETECTED")
         print("="*80)
         return
 
     print("\n" + "="*80)
-    print(f"PUMP ALERTS ({len(alerts)} detected)")
+    print(f"🚨 PUMP ALERTS ({len(alerts)} detected)")
     print("="*80)
 
     alerts = sorted(alerts, key=lambda x: x['pump_score'], reverse=True)
     for alert in alerts:
         print(f"\n{alert['ticker']:6s} - Score: {alert['pump_score']:.0f} ({alert['status']})")
-        print(f"   Date: {alert['date']}")
-        print(f"   Price: ${alert['close']:.2f}")
+        print(f"   Date: {alert['alert_date'].strftime('%Y-%m-%d')}")
+        print(f"   Price: ${alert['alert_price']:.2f}")
         print(f"   Volume: {alert['volume']:,.0f}")
         print(f"   Vol Z-Score: {alert['vol_z']:.2f}")
-        print(f"   Return: {alert['return']*100:+.2f}%")
+        print(f"   Return: {alert['daily_return']*100:+.2f}%")
         if alert['days_since_last'] is not None:
             print(f"   Days since last pump: {alert['days_since_last']}")
 
+    # Save today's alerts to the run-scoped alerts folder
     alerts_df = pd.DataFrame(alerts)
-    alerts_dir = os.path.join(RUN_DIR, "data", "alerts")
-    os.makedirs(alerts_dir, exist_ok=True)
-
-    out_file = os.path.join(alerts_dir, f"pump_alerts_{datetime.now():%Y%m%d}.csv")
+    out_file = os.path.join(ALERTS_DIR, f"pump_alerts_{datetime.now():%Y%m%d}.csv")
     alerts_df.to_csv(out_file, index=False)
-    print(f"\nAlerts saved to: {out_file}")
+    print(f"\nToday's alerts saved to: {out_file}")
+
 
 # ============================================================================ 
 # MAIN EXECUTION
@@ -255,6 +285,7 @@ if __name__ == "__main__":
 
     alerts = run_scan(tiers_to_check)
     generate_alert_report(alerts)
+    log_alerts_to_history(alerts)  # ← NEW: Log to master history
 
     print("\n" + "="*80)
     print("SCAN COMPLETE")
