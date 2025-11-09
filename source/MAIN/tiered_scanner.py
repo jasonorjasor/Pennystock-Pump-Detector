@@ -31,8 +31,8 @@ os.makedirs(ALERTS_DIR, exist_ok=True)
 # File locations under the run
 ALERTS_HISTORY_FILE = os.path.join(ALERTS_DIR, "alerts_history.csv")  # master log of all alerts
 
-TIER1_MIN_EPISODES = 8  # Daily monitoring
-TIER2_MIN_EPISODES = 6  # Weekly monitoring
+TIER1_MIN_EPISODES = 6  # Daily monitoring
+TIER2_MIN_EPISODES = 4  # Weekly monitoring
 PUMP_THRESHOLD = 50
 
 print("="*80)
@@ -63,7 +63,7 @@ def assign_tiers(intervals_df):
         num_episodes = row['num_episodes']
         cv = row['coefficient_variation']
 
-        if num_episodes >= TIER1_MIN_EPISODES or (num_episodes >= 7 and cv < 0.4):
+        if num_episodes >= TIER1_MIN_EPISODES or (num_episodes >= 5 and cv < 0.4):
             tiers['tier1'].append(ticker)
         elif num_episodes >= TIER2_MIN_EPISODES:
             tiers['tier2'].append(ticker)
@@ -80,6 +80,12 @@ print(f"  Tier 3 (Ignore):  {len(tiers['tier3'])} tickers")
 
 print("\nTier 1 (Daily Monitoring):")
 for ticker in sorted(tiers['tier1']):
+    row = intervals_df[intervals_df['ticker'] == ticker].iloc[0]
+    print(f"  {ticker:6s}: {row['num_episodes']:2.0f} episodes, "
+          f"{row['avg_gap_days']:5.1f}d avg, CV={row['coefficient_variation']:.2f}")
+    
+print("\nTier 2 (Weekly Monitoring):")
+for ticker in sorted(tiers['tier2']):
     row = intervals_df[intervals_df['ticker'] == ticker].iloc[0]
     print(f"  {ticker:6s}: {row['num_episodes']:2.0f} episodes, "
           f"{row['avg_gap_days']:5.1f}d avg, CV={row['coefficient_variation']:.2f}")
@@ -289,4 +295,4 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("SCAN COMPLETE")
     print("="*80)
-    print("\nNext step: Run 'python alert_tracker.py' to check outcomes")
+
