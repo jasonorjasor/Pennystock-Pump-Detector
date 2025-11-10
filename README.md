@@ -1,10 +1,10 @@
-#🎯 Penny Stock Pump-and-Dump Detection System
+# 🎯 Penny Stock Pump-and-Dump Detection System
 
 A real-time ML-based surveillance system for detecting and validating pump-and-dump manipulation in penny stocks.
 
 This system continuously scans tickers for volume/price anomalies, assigns a PumpScore, validates predictions through forward returns, and visualizes performance metrics via a Streamlit dashboard.
 
-###📊 Example Outputs
+### 📊 Example Outputs
 ✅ Live Dashboard Overview
 
 Real-time KPIs: Total alerts, classification coverage, precision (with 95% CI), and false positive rate.
@@ -35,8 +35,8 @@ Identifies repeat-offender tickers and average time between pump cycles.
 Visualizes which days of the week pump events cluster on.
 
 
-##✅ Key Features
-###🔍 Real-Time Detection Engine
+## ✅ Key Features
+### 🔍 Real-Time Detection Engine
 
 Scans tickers for price/volume anomalies using Yahoo Finance data
 
@@ -46,7 +46,7 @@ Logs new alerts to alerts_history.csv and daily snapshot files
 
 Supports custom watchlists via watchlist.txt
 
-###🧮 Forward Validation System
+### 🧮 Forward Validation System
 
 Each alert is tracked post-detection with:
 
@@ -64,7 +64,7 @@ likely_pump	5d return < –10%
 false_positive	5d return > +5%
 uncertain	5d return between –10% and +5%
 pending	<5 days old
-###🧠 Tiered Monitoring System
+### 🧠 Tiered Monitoring System
 
 Organizes tickers by recurrence frequency and consistency:
 
@@ -75,7 +75,7 @@ Tier 3	< 4 episodes	Monthly	Low-frequency monitoring
 
 Efficiency: Monitors ~60 % of tickers but captures ~80 % of pump activity.
 
-###📈 Streamlit Dashboard
+### 📈 Streamlit Dashboard
 
 Interactive visualization panel for tracking alerts and outcomes:
 
@@ -87,7 +87,7 @@ Ticker Detail with price charts and alert markers
 
 Score Bin Analysis and Weekly Precision Trend
 
-###📊 Statistical Validation
+### 📊 Statistical Validation
 
 Calculates Wilson 95 % confidence intervals for live precision
 
@@ -97,20 +97,20 @@ Tracks weekly precision stability
 
 Enables data-driven threshold tuning
 
-##🚀 Daily Workflow
-# 1️⃣ Detect new pumps
+## 🚀 Daily Workflow
+#### 1️⃣ Detect new pumps
 python tiered_scanner.py
 
-# 2️⃣ Update forward outcomes
+#### 2️⃣ Update forward outcomes
 python alert_tracker.py
 
-# 3️⃣ Launch dashboard
+#### 3️⃣ Launch dashboard
 streamlit run dashboard.py
 
 
-####🕓 Run daily after market close (~4:30 PM ET)
+#### 🕓 Run daily after market close (~4:30 PM ET)
 
-###📁 Project Structure
+### 📁 Project Structure
 project/
 ├── tiered_scanner.py          # Real-time detection engine
 ├── alert_tracker.py           # Forward validation & outcome classification
@@ -123,7 +123,7 @@ project/
         │   ├── analysis/ticker_intervals.csv
         │   └── signals_csv/MASTER_TRUTH_WITH_EPISODES.csv
 
-###📈 Example Results
+### 📈 Example Results
 
 1-Year Historical Backtest
 
@@ -140,7 +140,7 @@ Week 1: 3 alerts (pending)
 Target: 20 + classified by Week 3
 Goal: 60–80 % forward precision
 
-###🧩 Tech Stack
+### 🧩 Tech Stack
 
 Python 3.12 +
 
@@ -154,7 +154,7 @@ streamlit – dashboard interface
 
 scipy – Wilson confidence intervals
 
-##🧠 Key Insights
+## 🧠 Key Insights
 ✅ Early-Warning Potential
 
 Multi-day campaigns show steadily rising PumpScores before collapse.
@@ -167,16 +167,16 @@ Tickers such as FEMY, SHOT, PRPL appear frequently across pump cycles.
 
 Pumps are not scheduled — chi-square test (p = 0.62) shows no weekday bias.
 
-##📜 License
+## 📜 License
 
 MIT License – see LICENSE for details.
 
-##🤝 Contributing
+## 🤝 Contributing
 
 Pull requests welcome.
 Open an issue for features or bug reports.
 
-⚠️ Disclaimer
+## ⚠️ Disclaimer
 
 Educational use only.
 This system is not investment advice.
