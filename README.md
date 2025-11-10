@@ -1,132 +1,184 @@
-🧠 Penny Stock Pump Detector
+🎯 Penny Stock Pump-and-Dump Detection System
 
-Real-time system for detecting and validating pump-and-dump patterns in micro-cap stocks — built with Python, Streamlit, and live market data.
+Real-time ML-based system for detecting and validating pump-and-dump manipulation in penny stocks.
+Built with Python, yfinance, and Streamlit.
 
-<p align="center"> <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python" /> <img src="https://img.shields.io/badge/Streamlit-dashboard-red?logo=streamlit" /> <img src="https://img.shields.io/badge/Status-Live-green" /> <img src="https://img.shields.io/badge/Precision-72%25-success" /> </p>
+<p align="center"> <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python" /> <img src="https://img.shields.io/badge/Streamlit-Live-red?logo=streamlit" /> <img src="https://img.shields.io/badge/Status-Production-green" /> <img src="https://img.shields.io/badge/Precision-TBD-yellow" /> </p>
 
-🚀 Overview
-This system continuously monitors tickers, calculates pump scores based on price-volume anomalies, and tracks their post-alert returns to classify real pump events.
-It combines:
-🔎 Tiered scanning for smart ticker prioritization
+📘 Overview
 
-📈 Real-time dashboards for metrics & visuals
+This system monitors penny-stock tickers for pump-and-dump manipulation using
+volume anomalies, price spikes, and volatility metrics.
 
-🧮 Statistical validation (precision + confidence intervals)
+It includes:
 
-🧾 Historical tracking for long-term performance review
+🔎 Real-time detection – daily post-market scans
 
-⚙️ Quick Start
-# 1️⃣  Install dependencies
-pip install pandas numpy yfinance streamlit altair scipy
+📈 Forward validation – 1-, 5-, 10-day return tracking
 
-# 2️⃣  Run the daily scanner (after market close)
+📊 Tiered monitoring – focuses on high-risk tickers
+
+🧮 Statistical confidence – precision ± 95 % CI
+
+🧠 Interactive dashboard – KPIs, charts, and trends
+
+🚀 Quick Start
+# 1. Install dependencies
+pip install pandas numpy yfinance streamlit altair scipy matplotlib
+
+# 2. Detect new pumps (≈ 30 s)
 python tiered_scanner.py
 
-# 3️⃣  Update alert outcomes
+# 3. Update outcomes (≈ 2–3 min)
 python alert_tracker.py
 
-# 4️⃣  Launch dashboard
+# 4. Launch dashboard
 streamlit run dashboard.py
 
-🧩 System Flow
-flowchart LR
-A[tiered_scanner.py 🧭] --> B[alerts_history.csv 📄]
-B --> C[alert_tracker.py 📊]
-C --> D[dashboard.py 🧠]
-D --> E[User: KPIs + Visuals]
+🕓 Run daily after market close (≈ 4 : 30 PM ET)
 
-🗂️ Project Layout
+🗂️ Project Structure
 project/
-├── dashboard.py             # Streamlit visualization app
-├── tiered_scanner.py        # Detects new pump alerts
-├── alert_tracker.py         # Tracks forward returns & classifies outcomes
-├── watchlist.txt            # Optional manual ticker list
+├── source/MAIN/
+│   ├── tiered_scanner.py     # Live detection engine
+│   ├── alert_tracker.py      # Forward-return validation
+│   ├── dashboard.py          # Streamlit dashboard
+│   ├── pump_analyzer.py      # Interval analysis
+│   └── pump_detector.py      # Historical backtest
 └── runs/
     └── 2025-11-07_2227_1y/
         └── data/
-            ├── alerts/alerts_history.csv
+            ├── alerts/
+            │   ├── alerts_history.csv
+            │   └── pump_alerts_YYYYMMDD.csv
             ├── analysis/ticker_intervals.csv
-            └── signals_csv/MASTER_TRUTH_WITH_EPISODES.csv
+            └── signals_csv/
+                └── MASTER_TRUTH_WITH_EPISODES.csv
 
-📊 Dashboard Features
-| Metric                       | Description                              |
-| ---------------------------- | ---------------------------------------- |
-| 🧮 **Total Alerts**          | Number of signals logged                 |
-| 📘 **Coverage %**            | % of alerts that have matured/classified |
-| 🎯 **Precision %**           | (Confirmed + Likely Pumps) / Classified  |
-| 🚫 **False-Positive Rate %** | % of false alarms                        |
-| 💥 **Avg Score**             | Mean pump-score value                    |
+🔬 Methodology
+📈 Detection Algorithm
 
+Features (10) – volume z-scores, price z-scores, gap-ups, volatility, and synergy
+→ combined into a pump score (0 – 100).
+
+if vol_z > 2: score += 20
+if vol_ratio > 3: score += 15
+if return > 0.1: score += 20
+if price_z > 2: score += 15
+# ...
+if score > 50:
+    flag_as_pump()
+
+🧱 Tiered Monitoring
+Tier	Criteria	Frequency	Purpose
+1	≥ 6 episodes or CV < 0.4	Daily	Core watchlist
+2	4 – 5 episodes	Mon / Wed / Fri	Secondary list
+3	≤ 3 episodes	Monthly	Archive
+
+Monitors ~ 60 % of tickers → captures ~ 80 % of pumps.
+
+🎯 Classification Logic
+Outcome	Definition
+confirmed_pump	5 d < –15 % or max drawdown < –25 %
+likely_pump	5 d < –10 %
+false_positive	5 d > +5 %
+uncertain	–10 % ≤ 5 d ≤ +5 %
+pending	< 5 days old
+📊 Dashboard Highlights
+KPI	Meaning
+Total Alerts	All detected signals
+Coverage %	Classified / Total
+Precision %	Confirmed + Likely / Classified
+FP Rate %	False positives / Classified
+Avg Score	Mean pump score
 Visuals
-Outcome Distribution
+
 Alerts Over Time
-Score Distribution (Bin Analysis)
+
+Outcome Distribution
+
+Score Bin Analysis
+
 Precision by Tier
+
 Weekly Precision Trend
-Per-Ticker Detail with Price Chart + Alert Markers
 
-🧾 Watchlist Mode
-Use watchlist.txt (next to tiered_scanner.py) to track trending or social-media tickers.
-Example:
-GME
-AMC
-CEI
-NAKD
-NVOS
+Per-Ticker Price Charts with Alert Markers
 
-Each line = one ticker.
-Inside tiered_scanner.py set:
-WATCHLIST_MODE = "union_tier1"   # adds your watchlist to Tier 1 tickers
-Other modes:
-"override" → only use your watchlist
-"union_selected" → merge watchlist + whatever tier runs that day
+🧪 Validation Results
+📜 Historical Backtest (1 Year)
 
-📈 Example Live Results (Nov 2025)
-| Metric                  | Value |
-| ----------------------- | ----- |
-| **Total Alerts**        | 23    |
-| **Classified**          | 18    |
-| **Precision**           | 72 %  |
-| **False-Positive Rate** | 18 %  |
-| **Avg Score**           | 58.2  |
-| **Tier 1 Precision**    | 75 %  |
-| **Tier 2 Precision**    | 66 %  |
+345 signals / 32 tickers
 
-<details> <summary>📘 <b>How Classification Works</b></summary>
-Pulls 30 days of price data post-alert
-Calculates forward returns at 1, 5 & 10 days
-Classifies alerts as:
-  confirmed_pump → > 15–20 % crash
-  likely_pump → moderate crash
-  false_positive → sustained gains
-  uncertain → flat or ambiguous
-  pending → too recent (< 5 days)
-</details>
+68.4 % detection accuracy
 
-🧭 Weekly Routine
-| Day                    | Task             | Script                       | Description              |
-| ---------------------- | ---------------- | ---------------------------- | ------------------------ |
-| 🕓 Daily (after close) | Run scanner      | `python tiered_scanner.py`   | Detect new pumps         |
-| 🧮 Daily               | Update returns   | `python alert_tracker.py`    | Classify old alerts      |
-| 📊 Friday              | Review dashboard | `streamlit run dashboard.py` | Visual review of metrics |
+219 episodes (35 % multi-day)
 
-🧠 Stats & Validation
-Live precision = 72 % (95 % CI ≈ 61–82 %)
-1-Year Backtest Accuracy = 68 %
-Avg crash magnitude = −22 %
-Tier 1 consistently outperforms Tier 2
+Top tickers → FEMY, ORIS, SHOT
 
-🔮 Next Milestones
- Collect 2 more weeks of live data
- Add Discord/Email alert integration
- Implement paper-trading simulator
- Generate final validation report (Dec 2025)
+🔴 Live Validation (Nov 2025)
 
-🧰 Tech Stack
-| Category      | Tools                                   |
-| ------------- | --------------------------------------- |
-| Core          | Python 3.12 · pandas · numpy · yfinance |
-| Visualization | Streamlit · Altair                      |
-| Stats         | SciPy (Wilson confidence intervals)     |
-| OS            | macOS + Windows tested                  |
+Week 1 active run
 
+3 pending alerts (FEMY, AZI, PRPL)
+
+Target → 20 classified alerts by Week 3
+
+Goal → 60 – 80 % precision on forward data
+
+⚙️ Technical Specs
+
+Dependencies
+
+pandas  numpy  yfinance  streamlit
+altair  scipy  matplotlib
+
+
+Data Sources
+
+Yahoo Finance API (yfinance)
+
+Daily updates (post-close)
+
+One-year historical context for backtesting
+
+🧭 Roadmap
+✅ Completed
+
+Core detection algorithm
+
+1-year backtest (68 % accuracy)
+
+Episode + interval analysis
+
+Tiered monitoring framework
+
+Live alert tracking
+
+Streamlit dashboard
+
+🔄 In Progress
+
+Collect 2 weeks of live alerts
+
+Validate precision on forward data
+
+Score-bin threshold optimization
+
+🔮 Planned
+
+Discord / Email notifications
+
+Paper-trading simulator (P&L tracking)
+
+ML classifier if rule-based plateaus
+
+3-year extended backtest
+
+📈 Key Insights (from Backtest)
+
+Pump timing is random → no calendar patterns
+
+Repeat tickers dominate → 30 % of stocks = 80 % of pumps
+
+Multi-day campaigns common → real-time detection is essential
