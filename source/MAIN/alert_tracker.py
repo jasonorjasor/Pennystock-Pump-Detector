@@ -4,6 +4,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import os
 import glob
+from math import sqrt  # NEW: for Wilson CI math
 
 # ============================================================================
 # CONFIGURATION
@@ -45,39 +46,40 @@ print(f"\nLoaded {len(alerts_df)} historical alerts")
 print(f"Date range: {alerts_df['alert_date'].min().date()} to {alerts_df['alert_date'].max().date()}")
 
 # ============================================================================
-# CALCULATE OUTCOMES
+# FORWARD RETURNS + OUTCOME RULES
 # ============================================================================
 
 def get_forward_returns(ticker, alert_date, alert_price, days_list):
-    """Calculate returns at multiple time horizons after alert"""
+    """Calculate returns at multiple time horizons after alert."""
     try:
         # Download data from alert date + 30 days to cover all horizons
         start = alert_date
         end = alert_date + timedelta(days=30)
-        
         df = yf.download(ticker, start=start, end=end, progress=False)
+
+        # Flatten multiindex columns if present
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
-        
+
         if df.empty:
-            return {f'return_{d}d': None for d in days_list}
-        
-        # Find actual trading days (market might be closed)
+            return {f'return_{d}d': None for d in days_list} | {
+                'max_drawdown': None, 'days_to_bottom': None
+            }
+
+        # Restrict to days on/after alert_date
+        future_prices = df[df.index >= alert_date]
         returns = {}
+
         for target_days in days_list:
-            # Get target date
-            target_date = alert_date + timedelta(days=target_days)
-            
-            # Find closest trading day
-            future_prices = df[df.index >= alert_date]
+            # Pick the Nth bar after alert_date if exists; else None
             if len(future_prices) > target_days:
-                actual_price = future_prices.iloc[min(target_days, len(future_prices)-1)]['Close']
+                actual_price = future_prices.iloc[min(target_days, len(future_prices) - 1)]['Close']
                 ret = (actual_price - alert_price) / alert_price
                 returns[f'return_{target_days}d'] = ret
             else:
                 returns[f'return_{target_days}d'] = None
-        
-        # Also calculate max drawdown
+
+        # Max drawdown relative to alert price (even if later recovered)
         if len(future_prices) > 0:
             future_returns = (future_prices['Close'] - alert_price) / alert_price
             returns['max_drawdown'] = future_returns.min()
@@ -85,44 +87,46 @@ def get_forward_returns(ticker, alert_date, alert_price, days_list):
         else:
             returns['max_drawdown'] = None
             returns['days_to_bottom'] = None
-            
+
         return returns
-    
+
     except Exception as e:
         print(f"    Error fetching {ticker}: {e}")
-        return {f'return_{d}d': None for d in days_list}
+        return {f'return_{d}d': None for d in days_list} | {
+            'max_drawdown': None, 'days_to_bottom': None
+        }
 
 def classify_outcome(row):
-    """Classify alert outcome based on forward returns"""
+    """Classify alert outcome based on forward returns."""
     ret_1d = row.get('return_1d')
     ret_5d = row.get('return_5d')
     ret_10d = row.get('return_10d')
     max_dd = row.get('max_drawdown')
-    
+
     # Need at least 5-day return to classify
     if pd.isna(ret_5d):
         return 'pending'
-    
-    # Confirmed pump: Crashed within 5-10 days
+
+    # Confirmed pump: crashed within 5–10 days
     if ret_5d < -0.15 or (ret_10d is not None and ret_10d < -0.20):
         return 'confirmed_pump'
-    
-    # Quick reversal: Down 10%+ in 1 day
+
+    # Quick reversal: down 10%+ in 1 day
     if ret_1d is not None and ret_1d < -0.10:
         return 'confirmed_pump'
-    
+
     # Deep drawdown even if recovered
     if max_dd is not None and max_dd < -0.25:
         return 'confirmed_pump'
-    
-    # False positive: Sustained gains or flat
+
+    # False positive: sustained gains
     if ret_5d > 0.05:
         return 'false_positive'
-    
-    # Uncertain: Small movements
+
+    # Uncertain: small movements
     if ret_5d > -0.10:
         return 'uncertain'
-    
+
     return 'likely_pump'
 
 # ============================================================================
@@ -137,31 +141,29 @@ for idx, row in alerts_df.iterrows():
     ticker = row['ticker']
     alert_date = row['alert_date']
     alert_price = row['alert_price']
-    
-    # Skip if already has outcome (unless it was pending)
+
+    # Skip if already has outcome (unless pending) and recent
     if 'outcome' in row and row['outcome'] not in ['pending', None, '']:
         days_since = (datetime.now() - alert_date).days
-        if days_since < 10:  # Only skip if it's recent and already classified
+        if days_since < 10:  # keep recent labels; revisit older ones
             updated_rows.append(row)
             continue
-    
-    # Calculate how many days since alert
+
     days_since = (datetime.now() - alert_date).days
-    
     print(f"  {ticker:6s} ({alert_date.date()}) - {days_since} days ago...", end=" ")
-    
+
     # Get forward returns
     returns = get_forward_returns(ticker, alert_date, alert_price, TRACKING_DAYS)
-    
+
     # Update row with new data
     for key, value in returns.items():
         row[key] = value
-    
+
     # Classify outcome
     row['outcome'] = classify_outcome(row)
     row['days_since_alert'] = days_since
     row['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+
     print(f"{row['outcome']}")
     updated_rows.append(row)
 
@@ -172,6 +174,25 @@ for idx, row in alerts_df.iterrows():
 updated_df = pd.DataFrame(updated_rows)
 updated_df.to_csv(ALERTS_HISTORY_FILE, index=False)
 print(f"\nUpdated alerts saved to {ALERTS_HISTORY_FILE}")
+
+# ============================================================================
+# REPORT HELPERS: Wilson CI
+# ============================================================================
+
+def wilson_ci(successes: int, trials: int, z: float = 1.96):
+    """
+    Wilson score interval for a binomial proportion.
+    Returns (low_pct, high_pct) in percent, or (None, None) if trials == 0.
+    """
+    if trials == 0:
+        return (None, None)
+    p = successes / trials
+    denom = 1.0 + (z*z) / trials
+    centre = p + (z*z) / (2.0 * trials)
+    margin = z * sqrt((p*(1.0 - p) + (z*z)/(4.0*trials)) / trials)
+    low = (centre - margin) / denom
+    high = (centre + margin) / denom
+    return low * 100.0, high * 100.0
 
 # ============================================================================
 # GENERATE PERFORMANCE REPORT
@@ -195,41 +216,51 @@ if len(classified) > 0:
     for outcome, count in outcome_counts.items():
         pct = count / len(classified) * 100
         print(f"  {outcome:20s}: {count:3d} ({pct:.1f}%)")
-    
-    # Calculate precision (confirmed pumps / total classified)
+
+    # Precision = (confirmed + likely) / classified
     pumps = len(classified[classified['outcome'] == 'confirmed_pump'])
     likely = len(classified[classified['outcome'] == 'likely_pump'])
-    precision = (pumps + likely) / len(classified) * 100
-    
-    print(f"\n📊 PRECISION RATE: {precision:.1f}%")
-    print(f"   (Confirmed + Likely Pumps) / Total Classified")
-    
+    successes = pumps + likely
+    trials = len(classified)
+    precision = (successes / trials * 100.0) if trials > 0 else float("nan")
+    ci_low, ci_high = wilson_ci(successes, trials)
+
+    # Coverage
+    coverage_pct = (trials / len(updated_df) * 100.0) if len(updated_df) > 0 else 0.0
+
+    if ci_low is not None:
+        print(f"\nPRECISION RATE: {precision:.1f}% (95% CI: {ci_low:.1f}-{ci_high:.1f}%)")
+    else:
+        print(f"\nPRECISION RATE: N/A (no classified alerts yet)")
+    print("   (Confirmed + Likely Pumps) / Total Classified")
+    print(f"   Coverage: {trials}/{len(updated_df)} alerts ({coverage_pct:.1f}%)")
+
     # Average returns by outcome
     print(f"\nAverage Returns by Outcome:")
     for outcome in ['confirmed_pump', 'likely_pump', 'uncertain', 'false_positive']:
         subset = classified[classified['outcome'] == outcome]
         if len(subset) > 0:
-            avg_5d = subset['return_5d'].mean() * 100
-            avg_10d = subset['return_10d'].mean() * 100
+            avg_5d = subset['return_5d'].mean() * 100 if 'return_5d' in subset.columns else np.nan
+            avg_10d = subset['return_10d'].mean() * 100 if 'return_10d' in subset.columns else np.nan
             print(f"  {outcome:20s}: 5d={avg_5d:+.1f}%  10d={avg_10d:+.1f}%")
-    
+
     # Performance by tier
     print(f"\nPerformance by Tier:")
     for tier in ['tier1', 'tier2']:
-        tier_alerts = classified[classified['tier'] == tier]
+        tier_alerts = classified[classified['tier'] == tier] if 'tier' in classified.columns else pd.DataFrame()
         if len(tier_alerts) > 0:
             tier_pumps = len(tier_alerts[tier_alerts['outcome'].isin(['confirmed_pump', 'likely_pump'])])
             tier_precision = tier_pumps / len(tier_alerts) * 100
             print(f"  {tier}: {tier_precision:.1f}% precision ({tier_pumps}/{len(tier_alerts)} alerts)")
-    
-    # Top performing tickers
+
+    # Top alerted tickers
     print(f"\nTop Alerted Tickers:")
     ticker_counts = classified['ticker'].value_counts().head(5)
     for ticker, count in ticker_counts.items():
         ticker_alerts = classified[classified['ticker'] == ticker]
         ticker_pumps = len(ticker_alerts[ticker_alerts['outcome'].isin(['confirmed_pump', 'likely_pump'])])
         ticker_precision = ticker_pumps / len(ticker_alerts) * 100
-        avg_score = ticker_alerts['pump_score'].mean()
+        avg_score = ticker_alerts['pump_score'].mean() if 'pump_score' in ticker_alerts.columns else np.nan
         print(f"  {ticker:6s}: {count} alerts, {ticker_precision:.0f}% precision, avg_score={avg_score:.1f}")
 
 # ============================================================================
@@ -240,13 +271,13 @@ if len(pending) > 0:
     print(f"\n" + "="*80)
     print(f"PENDING ALERTS (Too Recent to Classify)")
     print("="*80)
-    
+
     for _, alert in pending.iterrows():
         print(f"\n{alert['ticker']:6s} - Score: {alert['pump_score']:.0f}")
         print(f"   Alert Date: {alert['alert_date'].date()}")
         print(f"   Days Since: {alert['days_since_alert']}")
         print(f"   Alert Price: ${alert['alert_price']:.2f}")
-        if not pd.isna(alert.get('return_1d')):
+        if 'return_1d' in alert and not pd.isna(alert.get('return_1d')):
             print(f"   1-Day Return: {alert['return_1d']*100:+.1f}%")
 
 print("\n" + "="*80)

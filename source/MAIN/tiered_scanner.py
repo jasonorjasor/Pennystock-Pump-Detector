@@ -4,6 +4,11 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 import glob
+from pathlib import Path
+
+# Where this script lives (for reliable paths)
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 
 # ============================================================================
 # CONFIGURATION
@@ -18,6 +23,9 @@ def find_latest_run():
     return os.path.normpath(latest)  # normalize to avoid trailing slash issues
 
 LATEST_RUN = find_latest_run()
+print("="*80)
+print("TIERED PUMP MONITORING SYSTEM")
+print("="*80)
 print(f"Using data from: {LATEST_RUN}")
 
 # Existing inputs:
@@ -35,9 +43,35 @@ TIER1_MIN_EPISODES = 6  # Daily monitoring
 TIER2_MIN_EPISODES = 4  # Weekly monitoring
 PUMP_THRESHOLD = 50
 
-print("="*80)
-print("TIERED PUMP MONITORING SYSTEM")
-print("="*80)
+# How to handle your watchlist if present
+# Options:
+#   "override"       → only use tickers from watchlist.txt
+#   "union_tier1"    → combine watchlist + Tier 1 tickers (recommended)
+#   "union_selected" → combine watchlist + whichever tier is active that day
+WATCHLIST_MODE = "union_tier1"   # <-- your current goal
+
+# ------------------------------------------------------------------
+# OPTIONAL: Override tickers with watchlist.txt
+#    - One TICKER per line (no commas), e.g.:
+#        FEMY
+#        PRPL
+#        AZI
+# ------------------------------------------------------------------
+def load_watchlist(file_name="watchlist.txt"):
+    """
+    Load tickers from watchlist.txt located next to this script (one per line).
+    Returns None if file not found.
+    """
+    file_path = SCRIPT_DIR / file_name
+    if not file_path.exists():
+        print("watchlist.txt not found — using tickers from tier assignment instead.")
+        return None
+    tickers = [line.strip().upper() for line in file_path.read_text().splitlines() if line.strip()]
+    print(f"Loaded {len(tickers)} tickers from {file_path}")
+    return tickers
+
+WATCHLIST_OVERRIDE = load_watchlist()
+
 
 # ============================================================================
 # LOAD HISTORICAL DATA
@@ -73,7 +107,7 @@ def assign_tiers(intervals_df):
 
 tiers = assign_tiers(intervals_df)
 
-print("\nTier Assignment:")
+print("\nTier Assignment (from historical intervals):")
 print(f"  Tier 1 (Daily):   {len(tiers['tier1'])} tickers")
 print(f"  Tier 2 (Weekly):  {len(tiers['tier2'])} tickers")
 print(f"  Tier 3 (Ignore):  {len(tiers['tier3'])} tickers")
@@ -194,14 +228,34 @@ def run_scan(tiers_to_check):
 
     alerts = []
     for tier_name in tiers_to_check:
-        tickers_to_check = tiers[tier_name]
-        if len(tickers_to_check) == 0:
-            continue
-        print(f"\nChecking {tier_name.upper()} ({len(tickers_to_check)} tickers)...")
+        if WATCHLIST_OVERRIDE:
+            if WATCHLIST_MODE == "override":
+                base = set(WATCHLIST_OVERRIDE)
+                msg = f"via watchlist OVERRIDE ({len(base)} tickers)"
+            elif WATCHLIST_MODE == "union_tier1":
+                base = set(WATCHLIST_OVERRIDE) | set(tiers.get("tier1", []))
+                msg = f"watchlist ∪ TIER1 ({len(base)} tickers)"
+            elif WATCHLIST_MODE == "union_selected":
+                base = set(WATCHLIST_OVERRIDE) | set(tiers.get(tier_name, []))
+                msg = f"watchlist ∪ {tier_name.upper()} ({len(base)} tickers)"
+            else:
+                base = set(WATCHLIST_OVERRIDE)
+                msg = f"via watchlist (unknown mode -> override) ({len(base)} tickers)"
+            tickers_to_check = sorted(base)
+            print(f"\nChecking {tier_name.upper()} {msg}: {', '.join(tickers_to_check[:20])}" +
+                (" ..." if len(tickers_to_check) > 20 else ""))
+        else:
+            tickers_to_check = sorted(set(tiers.get(tier_name, [])))
+            print(f"\nChecking {tier_name.upper()} ({len(tickers_to_check)} tickers): " +
+                ", ".join(tickers_to_check[:20]) + (" ..." if len(tickers_to_check) > 20 else ""))
+
+
+
         for ticker in tickers_to_check:
+            # Use historical avg_gap and last_pump if available; otherwise fall back to defaults
             ticker_row = intervals_df[intervals_df['ticker'] == ticker]
             avg_gap = ticker_row['avg_gap_days'].values[0] if len(ticker_row) > 0 else 30
-            last_pump = last_pump_dates.get(ticker)
+            last_pump = last_pump_dates.get(ticker, None)
 
             print(f"  Checking {ticker:6s}...", end=" ")
             alert = check_ticker(ticker, tier_name, last_pump, avg_gap)
@@ -295,4 +349,3 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("SCAN COMPLETE")
     print("="*80)
-
