@@ -1,171 +1,185 @@
-# 🚨 Pennystock Pump Detector  
-A real-time surveillance engine for detecting pump-and-dump schemes in small-cap and micro-cap stocks.
+# 🎯 Penny Stock Pump-and-Dump Detection System
 
-This system ingests live market data, detects statistical anomalies, assigns a PumpScore, classifies signals, groups them into coordinated episodes, and generates a complete audit trail with charts, logs, and outcomes.
+A real-time ML-based surveillance system for detecting and validating pump-and-dump manipulation in penny stocks.
 
----
+This system continuously scans tickers for volume/price anomalies, assigns a PumpScore, validates predictions through forward returns, and visualizes performance metrics via a Streamlit dashboard.
 
-# 📊 Example Outputs
+### 📊 Example Outputs
+✅ Live Dashboard Overview
 
-### ✅ Pump Score Progression Across Multi-Day Episodes  
-Shows whether pump behavior escalates day-by-day (supports early-warning detection).  
-![Episode Progression](data/analysis/episode_progression.png)
-
----
-
-### ✅ Pump Interval Analysis  
-Identifies repeat-offender tickers and the average time between pump cycles.  
-![Pump Intervals](data/analysis/ticker_intervals.png)
-
----
-
-### ✅ Temporal Heatmap  
-Visualizes which days of the week pumps cluster on.  
-![Temporal Heatmap](data/analysis/temporal_heatmap.png)
-
----
-
-# ✅ Key Features
-
-### 🔍 **1. Live Pump Detection Engine**
-- Calculates real-time volume/price anomalies  
-- Computes a *PumpScore* (0–100+)  
-- Flags signals automatically when PumpScore > threshold  
-- Outputs timestamped alerts + logs  
-- Designed for long-running monitoring jobs  
-
-### 📈 **2. Backtesting System**
-Every pump signal is backtested with:
-- 1, 5, 10, 20-day forward returns  
-- Max drawdown  
-- Days to bottom  
-- Max gain (continued pumping)  
-- Days to peak  
-
-### 🧠 **3. Auto Classification**
-Each signal becomes:
-- `confirmed_pump`  
-- `likely_pump`  
-- `likely_legit`  
-- `uncertain`  
-- `insufficient_data`  
-
-### 🗂️ **4. Pump Episode Detection**
-Episode clustering detects **coordinated schemes**, grouping signals into multi-day campaigns.
-
-Example fields:
-- `episode_key`  
-- `signal_count`  
-- `avg_pump_score`  
-- `duration_days`  
-- `episode_pump_rate`  
-
-### 🧰 **5. Organized Dataset Outputs**
-All data is saved in a structured folder system:
-data/
-images/TICKER/ # visual charts
-signals_csv/
-TICKER/signals.csv
-TICKER/backtest.csv
-MASTER_TRUTH.csv
-MASTER_TRUTH_WITH_EPISODES.csv
-PUMP_EPISODES.csv
+Real-time KPIs: Total alerts, classification coverage, precision (with 95% CI), and false positive rate.
 
 
----
+✅ Price Chart with Alert Markers
 
-# 📦 Tech Stack
-
-- **Python 3.10+**  
-- **Pandas / NumPy** (data processing)  
-- **Matplotlib** (charting)  
-- **yfinance** (market data ingestion)  
-- **SQLite or CSV** (logging and persistence)  
-
----
-
-# 🚀 How It Works (Pipeline)
-
-### ✅ Step 1 — Analyze Each Ticker  
-Pulls 6 months of data → computes features → assigns PumpScore → saves charts.
-
-### ✅ Step 2 — Backtest Signals  
-Calculates forward returns, drawdown, and outcomes for each flagged event.
-
-### ✅ Step 3 — Build MASTER_TRUTH Dataset  
-Combines signals from all tickers into one authoritative ground-truth file.
-
-### ✅ Step 4 — Detect Pump Episodes  
-Applies 7-day clustering per ticker to identify coordinated manipulation.
-
-### ✅ Step 5 — Run Pattern Analysis  
-Produces:
-- Episode progression curves  
-- Pump interval predictions  
-- Temporal clustering heatmaps  
-- Summary statistics  
-
----
-
-# 📈 Analysis Summary (Example)
-
-Below is an excerpt from `summary_stats.txt`:
-Total signals detected: 187
-Confirmed pumps: 92
-Likely pumps: 32
-Pump detection rate: 66.1%
-
-Total episodes: 41
-Multi-day campaigns: 19
-Single-day pumps: 22
-
-✅ Pumps cluster on Thursdays
-✅ Some tickers show ~28–35 day repeat cycles
-✅ Multi-day episodes have rising PumpScores (early warning exists)
+Displays historical price with annotated alert markers for visual inspection.
 
 
----
+✅ Score Distribution Analysis
 
-# 🧪 Example Insights
-
-### ✅ **Early Warning Exists**  
-Multi-day pump campaigns show *increasing* PumpScores day-to-day →  
-meaning the system can flag coordinated pumps **before the peak**.
-
-### ✅ **Some Tickers Are Repeat Offenders**  
-Tickers like NAKA, ORIS, or OPI show multiple pump cycles in the dataset.
-
-### ✅ **Pumps Cluster on Certain Weekdays**  
-Your temporal heatmap and chi-square stats show non-uniform clustering.
-
----
-
-# 🛠️ Setup
-
-git clone https://github.com/jasonorjasor/Pennystock-Pump-Detector.git
-
-cd Pennystock-Pump-Detector
-pip install -r requirements.txt
-
-Run full analysis:
-python analyze_all.py
+Shows false positive and precision rates by score bin to optimize detection thresholds.
 
 
-(Or whatever your main script is named.)
+✅ Weekly Precision Tracking
 
----
-
-# 📜 License
-
-This project uses the **MIT License**.  
-See the `LICENSE` file for details.
-
----
-
-# 🤝 Contributing
-
-Pull requests are welcome.  
-Please open an issue first to discuss proposed changes.
+Monitors live performance and precision trends over time.
 
 
+✅ Ticker Interval Analysis
 
+Identifies repeat-offender tickers and average time between pump cycles.
+
+
+✅ Temporal Heatmap
+
+Visualizes which days of the week pump events cluster on.
+
+
+## ✅ Key Features
+### 🔍 Real-Time Detection Engine
+
+Scans tickers for price/volume anomalies using Yahoo Finance data
+
+Calculates PumpScore (0-100+) from engineered statistical features
+
+Logs new alerts to alerts_history.csv and daily snapshot files
+
+Supports custom watchlists via watchlist.txt
+
+### 🧮 Forward Validation System
+
+Each alert is tracked post-detection with:
+
+Forward returns at 1, 5, and 10-day horizons
+
+Maximum drawdown and days to bottom
+
+Outcome classification using return thresholds
+
+Classifications:
+
+Outcome	Criteria
+confirmed_pump	5d return < –15% or max drawdown < –25%
+likely_pump	5d return < –10%
+false_positive	5d return > +5%
+uncertain	5d return between –10% and +5%
+pending	<5 days old
+### 🧠 Tiered Monitoring System
+
+Organizes tickers by recurrence frequency and consistency:
+
+Tier	Criteria	Frequency	Purpose
+Tier 1	≥ 6 pump episodes or CV < 0.4	Daily	High-priority targets
+Tier 2	4–5 episodes	Mon/Wed/Fri	Secondary targets
+Tier 3	< 4 episodes	Monthly	Low-frequency monitoring
+
+Efficiency: Monitors ~60 % of tickers but captures ~80 % of pump activity.
+
+### 📈 Streamlit Dashboard
+
+Interactive visualization panel for tracking alerts and outcomes:
+
+KPI metrics (Total Alerts, Coverage %, Precision %, FP Rate, Avg Score)
+
+Charts: Alerts over time, Outcome Distribution, Precision by Tier
+
+Ticker Detail with price charts and alert markers
+
+Score Bin Analysis and Weekly Precision Trend
+
+### 📊 Statistical Validation
+
+Calculates Wilson 95 % confidence intervals for live precision
+
+Aggregates coverage and false positive rate by tier
+
+Tracks weekly precision stability
+
+Enables data-driven threshold tuning
+
+## 🚀 Daily Workflow
+#### 1️⃣ Detect new pumps
+python tiered_scanner.py
+
+#### 2️⃣ Update forward outcomes
+python alert_tracker.py
+
+#### 3️⃣ Launch dashboard
+streamlit run dashboard.py
+
+
+#### 🕓 Run daily after market close (~4:30 PM ET)
+
+### 📁 Project Structure
+project/
+├── tiered_scanner.py          # Real-time detection engine
+├── alert_tracker.py           # Forward validation & outcome classification
+├── dashboard.py               # Streamlit dashboard
+├── watchlist.txt              # Optional custom tickers
+└── runs/
+    └── 2025-11-07_2227_1y/
+        ├── data/
+        │   ├── alerts/alerts_history.csv
+        │   ├── analysis/ticker_intervals.csv
+        │   └── signals_csv/MASTER_TRUTH_WITH_EPISODES.csv
+
+### 📈 Example Results
+
+1-Year Historical Backtest
+
+345 total alerts
+236 confirmed pumps
+68.4 % detection precision
+219 unique pump episodes
+76 multi-day campaigns
+
+
+Live Validation (Ongoing)
+
+Week 1: 3 alerts (pending)
+Target: 20 + classified by Week 3
+Goal: 60–80 % forward precision
+
+### 🧩 Tech Stack
+
+Python 3.12 +
+
+pandas / numpy – data analysis
+
+yfinance – market data ingestion
+
+altair / matplotlib – visualization
+
+streamlit – dashboard interface
+
+scipy – Wilson confidence intervals
+
+## 🧠 Key Insights
+✅ Early-Warning Potential
+
+Multi-day campaigns show steadily rising PumpScores before collapse.
+
+✅ Repeat Offenders
+
+Tickers such as FEMY, SHOT, PRPL appear frequently across pump cycles.
+
+✅ Opportunistic Timing
+
+Pumps are not scheduled — chi-square test (p = 0.62) shows no weekday bias.
+
+## 📜 License
+
+MIT License – see LICENSE for details.
+
+## 🤝 Contributing
+
+Pull requests welcome.
+Open an issue for features or bug reports.
+
+## ⚠️ Disclaimer
+
+Educational use only.
+This system is not investment advice.
+Pump-and-dump schemes are illegal and can cause financial loss.
+
+<p align="center"> Built with ❤️ by [Jason Wu] | Updated November 2025 </p>
