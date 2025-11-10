@@ -8,8 +8,11 @@ Real-time system for detecting and validating pump-and-dump patterns in micro-ca
 This system continuously monitors tickers, calculates pump scores based on price-volume anomalies, and tracks their post-alert returns to classify real pump events.
 It combines:
 🔎 Tiered scanning for smart ticker prioritization
+
 📈 Real-time dashboards for metrics & visuals
+
 🧮 Statistical validation (precision + confidence intervals)
+
 🧾 Historical tracking for long-term performance review
 
 ⚙️ Quick Start
