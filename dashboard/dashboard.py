@@ -1,5 +1,6 @@
 # dashboard.py
 import os
+import math
 from pathlib import Path
 from datetime import timedelta
 
@@ -7,12 +8,18 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 import altair as alt
+from math import sqrt
 
 # ----------------------------
 # Streamlit config
 # ----------------------------
 st.set_page_config(page_title="Pump-and-Dump Detector — Live Alerts", layout="wide")
 st.title("Pump-and-Dump Detector — Live Alerts Dashboard")
+
+# Sidebar utility: clear cache while iterating
+if st.sidebar.button("Clear cache & rerun"):
+    st.cache_data.clear()
+    st.rerun()
 
 # ----------------------------
 # Runs root discovery
@@ -54,7 +61,7 @@ if RUNS_ROOT is None:
     st.stop()
 
 # ----------------------------
-# Helpers: find runs + load alerts
+# Helpers: list runs, load alerts, prices, metrics
 # ----------------------------
 def list_run_dirs(root: Path):
     candidates = [
@@ -87,7 +94,12 @@ def try_load_alerts(run_dir: Path):
 
 @st.cache_data(show_spinner=False)
 def load_price(ticker: str, start, end):
-
+    """
+    Robust price loader:
+    1) try yf.download(ticker, start, end)
+    2) fallback to yf.Ticker(ticker).history(period="max") then slice
+    Returns df with columns: ['date','close'] or empty DataFrame.
+    """
     try:
         # First attempt: bounded download
         df1 = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
@@ -104,12 +116,11 @@ def load_price(ticker: str, start, end):
             if not df2.empty:
                 return df2[["date","Close"]].rename(columns={"Close":"close"})
     except Exception as e:
-        # Surface error to caller
+        # Surface error to caller for diagnostics
         return pd.DataFrame({"__error__":[str(e)]})
 
     # Nothing worked
     return pd.DataFrame()
-
 
 def is_pump_series(s: pd.Series) -> pd.Series:
     return s.astype(str).isin(["confirmed_pump", "likely_pump"])
@@ -126,6 +137,18 @@ def style_outcome(df_show: pd.DataFrame) -> "pd.io.formats.style.Styler":
         c = colors.get(str(row.get("outcome", "")), None)
         return [f"background-color: {c}; color: black" if c else "" for _ in row]
     return df_show.style.apply(highlight, axis=1)
+
+def wilson_ci(successes: int, n: int, z: float = 1.96):
+    """Return (low%, high%) Wilson CI for a binomial proportion, or (None, None) if n==0."""
+    if n == 0:
+        return (None, None)
+    p = successes / n
+    denom = 1 + z*z/n
+    centre = p + z*z/(2*n)
+    margin = z * math.sqrt((p*(1-p) + z*z/(4*n)) / n)
+    low = (centre - margin) / denom
+    high = (centre + margin) / denom
+    return low*100, high*100
 
 # ----------------------------
 # Load run
@@ -176,29 +199,115 @@ if sel_tiers:
 if sel_outcomes:
     fdf = fdf[fdf["outcome"].isin(sel_outcomes)]
 
+# Early guard if filters hide everything
+if fdf.empty:
+    st.warning("No rows after filters. Clear or change filters to see data.")
+    st.stop()
+
 # ----------------------------
-# KPI Tiles
+# KPIs (computed on filtered set)
 # ----------------------------
-st.subheader("Key Metrics")
+st.subheader("Overview")
 
 total_alerts = len(fdf)
 classified_mask = fdf["outcome"].astype(str).isin(
     ["confirmed_pump", "likely_pump", "false_positive", "uncertain"]
 ) if "outcome" in fdf.columns else pd.Series(False, index=fdf.index)
 classified = fdf[classified_mask]
+pending = fdf[fdf["outcome"].astype(str).eq("pending")] if "outcome" in fdf.columns else fdf.iloc[0:0]
+
 precision = None
+ci_low, ci_high = (None, None)
 if not classified.empty and "outcome" in classified.columns:
     pumps = is_pump_series(classified["outcome"]).sum()
-    precision = 100.0 * pumps / len(classified)
+    precision = 100.0 * pumps / len(classified) if len(classified) > 0 else None
+    ci_low, ci_high = wilson_ci(pumps, len(classified)) if len(classified) > 0 else (None, None)
 
-most_active_tier = fdf["tier"].value_counts().idxmax() if "tier" in fdf.columns and not fdf.empty else "—"
+from math import sqrt  # keep at top of file if you prefer
+
+# --- Coverage & FP rate ---
+classified_count = len(classified)
+coverage = (classified_count / total_alerts * 100.0) if total_alerts > 0 else 0.0
+
+false_positives = classified[classified["outcome"].astype(str) == "false_positive"] if not classified.empty else classified
+fp_rate = (len(false_positives) / classified_count * 100.0) if classified_count > 0 else 0.0
+
+# --- Wilson CI for precision ---
+def wilson_ci(successes: int, trials: int, z: float = 1.96):
+    if trials == 0:
+        return (None, None)
+    p = successes / trials
+    denom = 1.0 + (z * z) / trials
+    centre = p + (z * z) / (2.0 * trials)
+    margin = z * sqrt((p * (1.0 - p) + (z * z) / (4.0 * trials)) / trials)
+    low = (centre - margin) / denom
+    high = (centre + margin) / denom
+    return low * 100.0, high * 100.0
+
+if precision is not None:
+    pumps = is_pump_series(classified["outcome"]).sum()
+    ci_low, ci_high = wilson_ci(pumps, classified_count)
+else:
+    ci_low, ci_high = None, None
+
+# --- Avg score (if available) ---
 avg_score = fdf["pump_score"].mean() if "pump_score" in fdf.columns and not fdf.empty else None
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Alerts (filtered)", f"{total_alerts}")
-c2.metric("Precision (filtered)", f"{precision:.1f}%" if precision is not None else "N/A")
-c3.metric("Most Active Tier", f"{most_active_tier}")
-c4.metric("Avg Pump Score", f"{avg_score:.1f}" if avg_score is not None else "—")
+# --- KPI tiles ---
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Alerts", f"{total_alerts}")
+c2.metric("Coverage", f"{coverage:.1f}%")
+c3.metric("Precision", f"{precision:.1f}%" if precision is not None else "N/A")
+if (ci_low is not None) and (ci_high is not None):
+    c3.caption(f"95% CI: {ci_low:.1f}–{ci_high:.1f}%")
+c4.metric("FP Rate", f"{fp_rate:.1f}%")
+c5.metric("Avg Score", f"{avg_score:.1f}" if avg_score is not None else "—")
+
+
+# ----------------------------
+# Score Distribution Analysis
+# ----------------------------
+st.subheader("Score Distribution Analysis")
+
+if "pump_score" in classified.columns and "outcome" in classified.columns and len(classified) > 5:
+    # Work on a copy to avoid SettingWithCopy warnings
+    classified_bins = classified.copy()
+
+    # Create bins
+    bins = [0, 55, 60, 70, 120]
+    labels = ["50-55", "55-60", "60-70", "70+"]
+    classified_bins["score_bin"] = pd.cut(classified_bins["pump_score"], bins=bins, labels=labels, include_lowest=True)
+    
+    # Calculate metrics per bin
+    bin_analysis = []
+    for bin_label in labels:
+        bin_data = classified_bins[classified_bins["score_bin"] == bin_label]
+        if len(bin_data) > 0:
+            fps = len(bin_data[bin_data["outcome"] == "false_positive"])
+            pumps = len(bin_data[bin_data["outcome"].isin(["confirmed_pump", "likely_pump"])])
+            bin_analysis.append({
+                "Score Range": bin_label,
+                "Count": len(bin_data),
+                "False Positives": fps,
+                "FP Rate (%)": round(fps / len(bin_data) * 100, 1),
+                "Precision (%)": round(pumps / len(bin_data) * 100, 1)
+            })
+    
+    if bin_analysis:
+        bin_df = pd.DataFrame(bin_analysis)
+        st.dataframe(bin_df, use_container_width=True)
+        
+        # Interpretation based on lowest bin
+        bottom_bin = bin_df.iloc[0]
+        if bottom_bin["FP Rate (%)"] > 50:
+            st.warning(
+                f"Scores {bottom_bin['Score Range']} have a {bottom_bin['FP Rate (%)']}% false positive rate. "
+                f"Consider raising the threshold to {bins[1]}."
+            )
+        else:
+            st.success("Score distribution looks healthy. Current threshold (50) is appropriate.")
+else:
+    st.info("Need at least 5 classified alerts to show score analysis.")
 
 # ----------------------------
 # Alerts Over Time (line)
@@ -259,7 +368,6 @@ if not fdf.empty and "ticker" in fdf.columns:
     agg = {"ticker": ("ticker", "count")}
     if "pump_score" in fdf.columns:
         agg["avg_score"] = ("pump_score", "mean")
-
     if "outcome" in fdf.columns:
         agg["pumps"] = ("outcome", lambda s: is_pump_series(s).sum())
 
@@ -268,6 +376,7 @@ if not fdf.empty and "ticker" in fdf.columns:
         grp["avg_score"] = grp["avg_score"].round(2)
     if "pumps" in grp.columns:
         grp["precision_%"] = (100.0 * grp["pumps"] / grp["alerts"]).round(2)
+
     st.dataframe(grp.sort_values("alerts", ascending=False), use_container_width=True)
 else:
     st.info("No rows after filters.")
@@ -324,9 +433,9 @@ if sel_ticker and sel_ticker != "(none)":
 
         with right:
             if "outcome" in tdf.columns and len(tdf) > 0:
-                pumps = tdf["outcome"].astype(str).isin(["confirmed_pump","likely_pump"]).sum()
-                prec = 100.0 * pumps / len(tdf) if len(tdf) else 0.0
-                st.metric("Precision (this ticker)", f"{prec:.1f}%")
+                pumps_t = tdf["outcome"].astype(str).isin(["confirmed_pump","likely_pump"]).sum()
+                prec_t = 100.0 * pumps_t / len(tdf) if len(tdf) else 0.0
+                st.metric("Precision (this ticker)", f"{prec_t:.1f}%")
             if "pump_score" in tdf.columns and len(tdf) > 0:
                 st.metric("Avg pump_score", f"{tdf['pump_score'].mean():.1f}")
 
@@ -356,7 +465,7 @@ if sel_ticker and sel_ticker != "(none)":
         if price is None or (isinstance(price, pd.DataFrame) and price.empty) or ("close" not in price.columns):
             # Fallback: show alert-day returns if available
             alt_df = tdf.copy()
-            if "daily_return" in alt_df.columns and not alt_df["daily_return"].isna().all():
+            if DATE_COL_T and "daily_return" in alt_df.columns and not alt_df["daily_return"].isna().all():
                 st.caption("No Yahoo price data — showing alert-day returns instead.")
                 tmp = alt_df[[DATE_COL_T,"daily_return"]].dropna().rename(columns={DATE_COL_T:"date"})
                 tmp = tmp.sort_values("date")
@@ -364,11 +473,10 @@ if sel_ticker and sel_ticker != "(none)":
             else:
                 st.info("No price data available.")
         else:
-            # Use Altair with red vertical alert lines
-            import altair as alt
+            # Ensure 'date' is datetime for Altair
             price_reset = price.copy()
-            # ensure 'date' is datetime for Altair
             price_reset["date"] = pd.to_datetime(price_reset["date"])
+
             line = (
                 alt.Chart(price_reset)
                 .mark_line()
@@ -378,7 +486,6 @@ if sel_ticker and sel_ticker != "(none)":
                 )
                 .properties(height=260, width="container")
             )
-
             rule_df = pd.DataFrame({"date": []})
             if DATE_COL_T:
                 rule_df = pd.DataFrame({
@@ -390,8 +497,6 @@ if sel_ticker and sel_ticker != "(none)":
             if DATE_COL_T and not rule_df.empty:
                 alert_dates = sorted(pd.to_datetime(tdf[DATE_COL_T].dropna()).dt.date.unique())
                 st.caption("Alert dates: " + ", ".join(str(d) for d in alert_dates[:20]) + (" …" if len(alert_dates) > 20 else ""))
-else:
-    st.caption("Pick a ticker in the sidebar to see details.")
 
 # ----------------------------
 # Performance Visuals: Precision by Tier + Weekly Precision
