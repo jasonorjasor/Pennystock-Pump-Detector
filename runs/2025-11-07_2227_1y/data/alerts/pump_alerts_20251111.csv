@@ -1,0 +1,2 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,outcome
+CHGG,tier1,2025-11-11,55.0,1.1399999856948853,6605400.0,1.1230154698897437,0.2808988809194277,54,OVERDUE,pending
