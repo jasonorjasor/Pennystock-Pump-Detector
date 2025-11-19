@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,outcome
+CAN,tier1,2025-11-18,65.0,1.0299999713897705,47462300.0,0.031145222514888354,0.2075029182169057,,NEW,pending
+CAN,tier2,2025-11-18,65.0,1.0299999713897705,47462300.0,0.031145222514888354,0.2075029182169057,,NEW,pending
