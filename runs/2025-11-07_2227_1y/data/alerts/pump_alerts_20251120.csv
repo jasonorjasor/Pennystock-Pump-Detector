@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,outcome
+SHOT,tier1,2025-11-20,110.0,0.17010000348091125,343946410.0,4.247198586661428,0.1970443060473963,45.0,OVERDUE,pending
+NFE,tier1,2025-11-20,65.0,1.4600000381469727,40299800.0,1.1326884161130446,0.2586207587568732,,NEW,pending
