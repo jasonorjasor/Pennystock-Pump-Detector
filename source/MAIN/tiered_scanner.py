@@ -16,11 +16,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Find the most recent run directory
 def find_latest_run():
-    run_dirs = glob.glob("runs/*/")
+    run_dirs = [
+        d for d in glob.glob("runs/*/")
+        if os.path.basename(os.path.normpath(d)) != "weekly_reviews"
+    ]
     if not run_dirs:
-        raise FileNotFoundError("No run directories found in runs/")
-    latest = max(run_dirs, key=os.path.getmtime)
-    return os.path.normpath(latest)  # normalize to avoid trailing slash issues
+        raise FileNotFoundError("No valid run directories found inside /runs/")
+    return max(run_dirs, key=os.path.getmtime)
+
 
 LATEST_RUN = find_latest_run()
 print("="*80)

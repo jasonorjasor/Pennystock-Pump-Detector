@@ -16,13 +16,19 @@ def find_latest_run():
         if os.path.isdir(d) and os.path.basename(os.path.normpath(d)) != "LATEST"
     ]
     if not candidates:
-        raise FileNotFoundError("No run directories found")
+        raise FileNotFoundError("No run directories found in runs/")
     return max(candidates, key=os.path.getmtime)
+
 
 RUN_DIR = find_latest_run()
 ALERTS_DIR = os.path.join(RUN_DIR, "data", "alerts")
 ALERTS_HISTORY_FILE = os.path.join(ALERTS_DIR, "alerts_history.csv")
 TRACKING_DAYS = [1, 5, 10]  # Check returns at 1d, 5d, 10d after alert
+
+# NEW: Weekly review folder inside the latest run
+WEEKLY_REVIEWS_DIR = os.path.join(RUN_DIR, "weekly_reviews")
+os.makedirs(WEEKLY_REVIEWS_DIR, exist_ok=True)
+
 
 print("="*80)
 print("PUMP ALERT TRACKER - Validation System")
@@ -266,334 +272,6 @@ if len(classified) > 0:
 # ============================================================================
 # PENDING ALERTS
 # ============================================================================
-# WEEKLY MARKDOWN PERFORMANCE REPORT GENERATOR
-# ============================================================================
-
-def generate_markdown_report(updated_df, alerts_dir=None):
-    """
-    Generate a Markdown performance report and save it under:
-        <run_dir>/weekly_reviews/performance_report_YYYY-MM-DD.md
-    """
-
-    import os
-    import pandas as pd
-    from datetime import datetime, timedelta
-    from math import sqrt
-
-    # ----------------------------
-    # Resolve paths
-    # ----------------------------
-    # If alerts_dir not given, default to global ALERTS_DIR from this script
-    if alerts_dir is None:
-        alerts_dir = ALERTS_DIR
-
-    # run_dir = parent of data/alerts → go up two levels
-    run_dir = os.path.dirname(os.path.dirname(alerts_dir))
-    reviews_dir = os.path.join(run_dir, "weekly_reviews")
-    os.makedirs(reviews_dir, exist_ok=True)
-
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    out_path = os.path.join(reviews_dir, f"performance_report_{today_str}.md")
-
-    # ----------------------------
-    # Basic slices
-    # ----------------------------
-    df = updated_df.copy()
-
-    if "alert_date" in df.columns:
-        df["alert_date"] = pd.to_datetime(df["alert_date"], errors="coerce")
-
-    total = len(df)
-    classified_df = df[df["outcome"].isin(
-        ["confirmed_pump", "likely_pump", "false_positive", "uncertain"]
-    )].copy()
-    pending_df = df[df["outcome"] == "pending"].copy()
-
-    classified = len(classified_df)
-    pending = len(pending_df)
-    coverage = (classified / total * 100) if total > 0 else 0.0
-
-    pumps = len(classified_df[classified_df["outcome"].isin(["confirmed_pump", "likely_pump"])])
-    false_pos = len(classified_df[classified_df["outcome"] == "false_positive"])
-
-    precision = (pumps / classified * 100) if classified > 0 else 0.0
-    fp_rate = (false_pos / classified * 100) if classified > 0 else 0.0
-
-    avg_score_all = df["pump_score"].mean() if "pump_score" in df.columns else None
-    avg_score_classified = (
-        classified_df["pump_score"].mean() if classified > 0 and "pump_score" in classified_df.columns else None
-    )
-
-    if "alert_date" in df.columns and not df["alert_date"].isna().all():
-        date_min = df["alert_date"].min().date()
-        date_max = df["alert_date"].max().date()
-    else:
-        date_min = "N/A"
-        date_max = "N/A"
-
-    # ----------------------------
-    # Wilson CI for precision
-    # ----------------------------
-    def wilson_ci(successes, trials, z=1.96):
-        if trials == 0:
-            return (None, None)
-        p = successes / trials
-        denom = 1.0 + (z * z) / trials
-        centre = p + (z * z) / (2.0 * trials)
-        margin = z * sqrt((p * (1.0 - p) + (z * z) / (4.0 * trials)) / trials)
-        low = (centre - margin) / denom
-        high = (centre + margin) / denom
-        return low * 100.0, high * 100.0
-
-    if classified > 0:
-        ci_low, ci_high = wilson_ci(pumps, classified)
-    else:
-        ci_low, ci_high = (None, None)
-
-    # ----------------------------
-    # Build Markdown header
-    # ----------------------------
-    ci_str = (
-        f"{ci_low:.1f}–{ci_high:.1f}%"
-        if (ci_low is not None and ci_high is not None)
-        else "N/A"
-    )
-
-    md = f"""# 📊 Pump Detector Live Performance Report
-**Period:** {date_min} → {date_max}  
-Generated on **{today_str}**
-
----
-
-## 🎯 Executive Summary
-
-- **Total alerts generated:** {total}
-- **Classified alerts:** {classified}
-- **Coverage:** {coverage:.1f}%
-- **Live precision:** {precision:.1f}% (95% CI: {ci_str})
-- **False positive rate:** {fp_rate:.1f}%
-- **Average PumpScore (all alerts):** {avg_score_all:.1f if avg_score_all is not None else "N/A"}
-- **Average PumpScore (classified alerts):** {avg_score_classified:.1f if avg_score_classified is not None else "N/A"}
-
----
-
-## Outcome Distribution
-
-"""
-
-    # Outcome distribution table
-    outcomes = df["outcome"].value_counts(dropna=False)
-    md += "| Outcome | Count |\n|---------|-------|\n"
-    for outcome, count in outcomes.items():
-        md += f"| {str(outcome)} | {int(count)} |\n"
-
-    # ----------------------------
-    # Score-bin analysis (classified only)
-    # ----------------------------
-    md += """
-
----
-
-## Score-Bin Analysis (Classified Only)
-
-"""
-
-    if classified > 0 and "pump_score" in classified_df.columns:
-        bins = [0, 55, 60, 70, 9999]
-        labels = ["≤55", "55–60", "60–70", "70+"]
-
-        classified_df["score_bin"] = pd.cut(
-            classified_df["pump_score"],
-            bins=bins,
-            labels=labels,
-            include_lowest=True
-        )
-
-        md += "| Score Range | Count | Pumps | False Positives | Precision % | FP Rate % |\n"
-        md += "|-------------|-------|--------|-----------------|-------------|-----------|\n"
-
-        # for threshold analysis later
-        bottom_bin = classified_df[classified_df["score_bin"] == labels[0]]
-
-        for label in labels:
-            sub = classified_df[classified_df["score_bin"] == label]
-            if len(sub) == 0:
-                md += f"| {label} | 0 | 0 | 0 | 0.0 | 0.0 |\n"
-                continue
-
-            cnt = len(sub)
-            pumps_bin = len(sub[sub["outcome"].isin(["confirmed_pump", "likely_pump"])])
-            fps_bin = len(sub[sub["outcome"] == "false_positive"])
-            prec_bin = pumps_bin / cnt * 100
-            fp_rate_bin = fps_bin / cnt * 100
-            md += f"| {label} | {cnt} | {pumps_bin} | {fps_bin} | {prec_bin:.1f} | {fp_rate_bin:.1f} |\n"
-    else:
-        bottom_bin = pd.DataFrame()
-        md += "_Not enough classified alerts or missing pump_score column._\n"
-
-    # ----------------------------
-    # Tier performance (classified only)
-    # ----------------------------
-    md += """
-
----
-
-## Tier Performance (Classified Only)
-
-"""
-
-    if classified > 0 and "tier" in classified_df.columns:
-        md += "| Tier | Alerts | Pumps | Precision % |\n"
-        md += "|------|--------|-------|-------------|\n"
-
-        tier_stats = []
-        for tier_name in sorted(classified_df["tier"].dropna().unique()):
-            tdf = classified_df[classified_df["tier"] == tier_name]
-            if len(tdf) == 0:
-                continue
-            t_pumps = len(tdf[tdf["outcome"].isin(["confirmed_pump", "likely_pump"])])
-            t_prec = t_pumps / len(tdf) * 100
-            tier_stats.append((tier_name, len(tdf), t_pumps, t_prec))
-            md += f"| {tier_name} | {len(tdf)} | {t_pumps} | {t_prec:.1f} |\n"
-
-        if len(tier_stats) >= 2:
-            # crude comparison: first two tiers in list
-            diff = tier_stats[0][3] - tier_stats[1][3]
-            if diff >= 5:
-                md += f"\nTier **{tier_stats[0][0]}** outperforms **{tier_stats[1][0]}** by {diff:.1f} percentage points.\n"
-            else:
-                md += f"\nTier precision is similar across tiers (Δ ≈ {diff:.1f} pct-pts).\n"
-    else:
-        md += "_Tier data not available or no classified alerts yet._\n"
-
-    # ----------------------------
-    # Threshold analysis / recommendation
-    # ----------------------------
-    md += """
-
----
-
-## 🎯 Threshold Analysis & Recommendation
-
-"""
-
-    if len(bottom_bin) >= 5:
-        bottom_fps = len(bottom_bin[bottom_bin["outcome"] == "false_positive"])
-        bottom_fp_rate = bottom_fps / len(bottom_bin) * 100
-
-        if bottom_fp_rate > 60:
-            md += (
-                f"- Bottom score bin (≤55) has a **{bottom_fp_rate:.1f}%** false positive rate "
-                f"over {len(bottom_bin)} alerts.\n"
-                f"- **Recommendation:** Consider raising the global threshold from 50 → 55.\n"
-            )
-        elif bottom_fp_rate < 30 and precision > 85:
-            md += (
-                f"- Bottom score bin (≤55) has only **{bottom_fp_rate:.1f}%** false positives.\n"
-                f"- Overall precision is **{precision:.1f}%**.\n"
-                f"- **Recommendation:** You could consider lowering the threshold (e.g., 50 → 45) "
-                f"to capture more pumps without introducing many false positives.\n"
-            )
-        else:
-            md += (
-                f"- Bottom score bin (≤55) has **{bottom_fp_rate:.1f}%** false positives "
-                f"over {len(bottom_bin)} alerts.\n"
-                f"- **Recommendation:** Keep the current threshold at 50 for now.\n"
-            )
-    else:
-        md += (
-            f"- Only **{len(bottom_bin)}** alerts in the bottom score bin (≤55).\n"
-            f"- **Recommendation:** Wait for more data before changing the threshold.\n"
-        )
-
-    # ----------------------------
-    # Pending alerts section
-    # ----------------------------
-    md += """
-
----
-
-## ⏳ Pending Alerts (Too Recent to Classify)
-
-"""
-
-    if pending > 0:
-        # Ensure days_since_alert exists, or compute on the fly
-        if "days_since_alert" not in pending_df.columns:
-            if "alert_date" in pending_df.columns:
-                now = datetime.now()
-                pending_df["days_since_alert"] = (now - pending_df["alert_date"]).dt.days
-            else:
-                pending_df["days_since_alert"] = None
-
-        md += "| Ticker | Alert Date | Days Since | Classifies On |\n"
-        md += "|--------|------------|------------|---------------|\n"
-
-        for _, row in pending_df.iterrows():
-            t = row.get("ticker", "")
-            ad = row.get("alert_date", None)
-            ds = row.get("days_since_alert", None)
-
-            if pd.isna(ad):
-                classify_on = "N/A"
-                days_until = ""
-                ad_str = "N/A"
-            else:
-                ad_str = ad.date()
-                classify_date = ad + timedelta(days=5)
-                classify_on = classify_date.date()
-                if ds is not None:
-                    days_until = 5 - ds
-                else:
-                    days_until = ""
-
-            md += f"| {t} | {ad_str} | {ds if ds is not None else ''} | {classify_on} ({days_until}d) |\n"
-    else:
-        md += "_No pending alerts; all current alerts are classified._\n"
-
-    # ----------------------------
-    # Ticker performance (all alerts)
-    # ----------------------------
-    md += """
-
----
-
-## 🏆 Ticker Performance (All Alerts)
-
-"""
-
-    if "ticker" in df.columns:
-        tickers = (
-            df.groupby("ticker")
-            .agg(alerts=("pump_score", "count"), avg_score=("pump_score", "mean"))
-            .sort_values("alerts", ascending=False)
-        )
-
-        md += "| Ticker | Alerts | Avg Score |\n|--------|--------|-----------|\n"
-        for t, row in tickers.iterrows():
-            md += f"| {t} | {int(row['alerts'])} | {row['avg_score']:.1f} |\n"
-    else:
-        md += "_No ticker column available in alerts history._\n"
-
-    md += f"""
-
-
----
-
-_Report automatically generated by `alert_tracker.py`._
-
-**Saved to:**  
-`{out_path}`
-"""
-
-    # ----------------------------
-    # Write file
-    # ----------------------------
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(md)
-
-    print(f"\nMarkdown report saved to:\n  {out_path}\n")
-
 
 if len(pending) > 0:
     print(f"\n" + "="*80)
@@ -608,13 +286,70 @@ if len(pending) > 0:
         if 'return_1d' in alert and not pd.isna(alert.get('return_1d')):
             print(f"   1-Day Return: {alert['return_1d']*100:+.1f}%")
 
+def generate_markdown_report(df):
+    """Generate a markdown report using the updated_df contents."""
+
+    import os
+    import pandas as pd
+    from datetime import datetime
+
+    # Where markdown files will be saved
+    out_dir = WEEKLY_REVIEWS_DIR
+    os.makedirs(out_dir, exist_ok=True)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    out_path = os.path.join(out_dir, f"report_{today}.md")
+
+    # -----------------------
+    # Build markdown content
+    # -----------------------
+    classified = df[df['outcome'].isin(
+        ['confirmed_pump', 'likely_pump', 'false_positive', 'uncertain']
+    )]
+    pending = df[df['outcome'] == 'pending']
+
+    total = len(df)
+    classified_count = len(classified)
+    coverage = classified_count / total * 100 if total > 0 else 0
+
+    # Precision calculation
+    pumps = len(classified[classified['outcome'].isin(['confirmed_pump', 'likely_pump'])])
+    precision = pumps / classified_count * 100 if classified_count > 0 else None
+    low, high = wilson_ci(pumps, classified_count)
+
+    md = f"""
+# 📊 Pump Detector Report — {today}
+
+## Summary
+- **Total alerts:** {total}
+- **Classified:** {classified_count}
+- **Coverage:** {coverage:.1f}%
+- **Precision:** {precision:.1f}% (95% CI: {low:.1f}–{high:.1f}%)
+- **Pending alerts:** {len(pending)}
+
+---
+
+## Outcome Distribution
+"""
+
+    if classified_count > 0:
+        counts = classified['outcome'].value_counts()
+        for outcome, cnt in counts.items():
+            md += f"- **{outcome}:** {cnt}\n"
+    else:
+        md += "*No classified alerts yet.*\n"
+
+    # Save markdown file
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(md)
+
+    print(f"\nMarkdown report saved to: {out_path}")
+
+
+generate_markdown_report(updated_df)
+
 print("\n" + "="*80)
 print("TRACKING COMPLETE")
 print("="*80)
 print(f"\nRun this script daily to update outcomes as they mature.")
 print(f"Alerts need 5+ days to be classified as pumps or false positives.")
-
-# Generate weekly markdown performance report
-generate_markdown_report(updated_df, RUN_DIR)
-
-
