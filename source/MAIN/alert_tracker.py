@@ -13,7 +13,8 @@ from math import sqrt  # NEW: for Wilson CI math
 def find_latest_run():
     candidates = [
         d for d in glob.glob("runs/*/")
-        if os.path.isdir(d) and os.path.basename(os.path.normpath(d)) != "LATEST"
+        if os.path.isdir(d)
+        and os.path.basename(os.path.normpath(d)) not in ["LATEST", "weekly_reviews"]
     ]
     if not candidates:
         raise FileNotFoundError("No run directories found in runs/")
@@ -25,7 +26,7 @@ ALERTS_DIR = os.path.join(RUN_DIR, "data", "alerts")
 ALERTS_HISTORY_FILE = os.path.join(ALERTS_DIR, "alerts_history.csv")
 TRACKING_DAYS = [1, 5, 10]  # Check returns at 1d, 5d, 10d after alert
 
-# NEW: Weekly review folder inside the latest run
+
 WEEKLY_REVIEWS_DIR = os.path.join(RUN_DIR, "weekly_reviews")
 os.makedirs(WEEKLY_REVIEWS_DIR, exist_ok=True)
 
@@ -286,64 +287,180 @@ if len(pending) > 0:
         if 'return_1d' in alert and not pd.isna(alert.get('return_1d')):
             print(f"   1-Day Return: {alert['return_1d']*100:+.1f}%")
 
-def generate_markdown_report(df):
-    """Generate a markdown report using the updated_df contents."""
+def generate_markdown_report(updated_df):
 
-    import os
-    import pandas as pd
-    from datetime import datetime
-
-    # Where markdown files will be saved
+    # Use global WEEKLY_REVIEWS_DIR from main script
     out_dir = WEEKLY_REVIEWS_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     today = datetime.now().strftime("%Y-%m-%d")
-    out_path = os.path.join(out_dir, f"report_{today}.md")
 
-    # -----------------------
-    # Build markdown content
-    # -----------------------
-    classified = df[df['outcome'].isin(
-        ['confirmed_pump', 'likely_pump', 'false_positive', 'uncertain']
+    # -------------------------
+    # Basic splits
+    # -------------------------
+    total = len(updated_df)
+    classified_df = updated_df[updated_df["outcome"].isin(
+        ["confirmed_pump", "likely_pump", "false_positive", "uncertain"]
     )]
-    pending = df[df['outcome'] == 'pending']
+    pending_df = updated_df[updated_df["outcome"] == "pending"]
 
-    total = len(df)
-    classified_count = len(classified)
-    coverage = classified_count / total * 100 if total > 0 else 0
+    classified = len(classified_df)
+    coverage = (classified / total * 100) if total > 0 else 0
 
-    # Precision calculation
-    pumps = len(classified[classified['outcome'].isin(['confirmed_pump', 'likely_pump'])])
-    precision = pumps / classified_count * 100 if classified_count > 0 else None
-    low, high = wilson_ci(pumps, classified_count)
+    # -------------------------
+    # Precision + CI
+    # -------------------------
+    if classified > 0:
+        pumps = len(classified_df[classified_df["outcome"].isin(
+            ["confirmed_pump", "likely_pump"]
+        )])
 
+        p = pumps / classified
+        z = 1.96
+
+        denom = 1 + (z*z)/classified
+        center = p + (z*z)/(2*classified)
+        margin = z * sqrt((p*(1-p) + (z*z)/(4*classified)) / classified)
+        low = (center - margin)/denom * 100
+        high = (center + margin)/denom * 100
+        precision = p * 100
+    else:
+        precision = None
+        low = None
+        high = None
+
+    # -------------------------
+    # Score-bin analysis
+    # -------------------------
+    score_bin_section = ""
+    if classified > 0 and "pump_score" in classified_df.columns:
+        bins = [0, 55, 60, 70, 200]
+        labels = ["≤55", "55–60", "60–70", "70+"]
+
+        classified_df["score_bin"] = pd.cut(
+            classified_df["pump_score"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True
+        )
+
+        score_rows = []
+        for label in labels:
+            group = classified_df[classified_df["score_bin"] == label]
+            if len(group) == 0:
+                continue
+            fp = len(group[group["outcome"] == "false_positive"])
+            pumps2 = len(group[group["outcome"].isin(["confirmed_pump", "likely_pump"])])
+            score_rows.append((label, len(group), pumps2, fp))
+
+        if score_rows:
+            score_bin_section += "## 📊 Score-Bin Analysis (Classified Only)\n\n"
+            score_bin_section += "| Score Range | Count | Pumps | FP | Precision % | FP Rate % |\n"
+            score_bin_section += "|-------------|-------|-------|----|-------------|-----------|\n"
+            for (rng, count, p2, fp2) in score_rows:
+                prec2 = (p2 / count * 100) if count > 0 else 0
+                fp_rate2 = (fp2 / count * 100) if count > 0 else 0
+                score_bin_section += f"| {rng} | {count} | {p2} | {fp2} | {prec2:.1f} | {fp_rate2:.1f} |\n"
+
+            # Threshold recommendation
+            bottom = [r for r in score_rows if r[0] == "≤55"]
+            if bottom:
+                _, count_b, pumps_b, fp_b = bottom[0]
+                fp_rate_b = fp_b / count_b * 100
+                score_bin_section += "\n### 🎯 Threshold Recommendation\n"
+                if fp_rate_b > 60:
+                    score_bin_section += (
+                        f"- FP rate **{fp_rate_b:.1f}%** in ≤55 ⇒ **Raise threshold to 55**\n"
+                    )
+                elif fp_rate_b < 30 and precision and precision > 85:
+                    score_bin_section += (
+                        f"- FP rate **{fp_rate_b:.1f}%** with high precision ⇒ **Lower threshold to 45**\n"
+                    )
+                else:
+                    score_bin_section += "- Current threshold (50) is acceptable.\n"
+
+    # -------------------------
+    # Tier performance
+    # -------------------------
+    tier_section = ""
+    if "tier" in classified_df.columns and classified > 0:
+        tier_section += "## 🏆 Tier Performance (Classified Only)\n\n"
+        tier_section += "| Tier | Alerts | Pumps | Precision % |\n"
+        tier_section += "|------|--------|--------|--------------|\n"
+
+        tier_stats = []
+        for tier in ["tier1", "tier2"]:
+            subset = classified_df[classified_df["tier"] == tier]
+            if len(subset) == 0:
+                continue
+            pumps_t = len(subset[subset["outcome"].isin(["confirmed_pump", "likely_pump"])])
+            prec_t = pumps_t / len(subset) * 100
+            tier_stats.append((tier, len(subset), pumps_t, prec_t))
+            tier_section += f"| {tier} | {len(subset)} | {pumps_t} | {prec_t:.1f}% |\n"
+
+        if len(tier_stats) == 2:
+            diff = tier_stats[0][3] - tier_stats[1][3]
+            if diff >= 5:
+                tier_section += f"\n✔ Tier 1 outperforms Tier 2 by **{diff:.1f} pts**\n"
+            else:
+                tier_section += f"\n⚠ Tier difference only **{diff:.1f} pts** → Tiering may need tuning\n"
+
+    # -------------------------
+    # Pending table
+    # -------------------------
+    pending_section = "## ⏳ Pending Alerts\n\n"
+    if len(pending_df) == 0:
+        pending_section += "*No pending alerts.*\n"
+    else:
+        pending_section += "| Ticker | Alert Date | Days Since | Classifies On |\n"
+        pending_section += "|--------|------------|------------|---------------|\n"
+        for _, r in pending_df.iterrows():
+            days = r["days_since_alert"]
+            classify_on = (r["alert_date"] + pd.Timedelta(days=5)).date()
+            pending_section += f"| {r['ticker']} | {r['alert_date'].date()} | {days} | {classify_on} |\n"
+
+    # -------------------------
+    # Final Markdown assembly
+    # -------------------------
     md = f"""
-# 📊 Pump Detector Report — {today}
+# 📊 Pump Detector Weekly Report  
+Generated: **{today}**
 
-## Summary
-- **Total alerts:** {total}
-- **Classified:** {classified_count}
-- **Coverage:** {coverage:.1f}%
-- **Precision:** {precision:.1f}% (95% CI: {low:.1f}–{high:.1f}%)
-- **Pending alerts:** {len(pending)}
+## 🧭 Executive Summary
+| Metric | Value |
+|--------|--------|
+| **Total Alerts** | {total} |
+| **Classified Alerts** | {classified} |
+| **Coverage** | {coverage:.1f}% |
+| **Precision** | {precision:.1f}% ({low:.1f}–{high:.1f}% 95% CI) |
+| **Pending Alerts** | {len(pending_df)} |
 
 ---
 
-## Outcome Distribution
+## 🎯 Outcome Distribution
 """
 
-    if classified_count > 0:
-        counts = classified['outcome'].value_counts()
-        for outcome, cnt in counts.items():
-            md += f"- **{outcome}:** {cnt}\n"
-    else:
+    if classified == 0:
         md += "*No classified alerts yet.*\n"
+    else:
+        md += "| Outcome | Count |\n|---------|--------|\n"
+        for o, cnt in classified_df["outcome"].value_counts().items():
+            md += f"| {o} | {cnt} |\n"
 
-    # Save markdown file
+    md += "\n---\n\n"
+    md += score_bin_section
+    md += "\n---\n\n"
+    md += tier_section
+    md += "\n---\n\n"
+    md += pending_section
+
+    # Save file
+    out_path = os.path.join(out_dir, f"report_{today}.md")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(md)
 
     print(f"\nMarkdown report saved to: {out_path}")
+
 
 
 generate_markdown_report(updated_df)
