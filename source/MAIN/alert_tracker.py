@@ -4,11 +4,10 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import os
 import glob
-from math import sqrt  # NEW: for Wilson CI math
+from math import sqrt  
+import json
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+
 
 def find_latest_run():
     candidates = [
@@ -287,6 +286,99 @@ if len(pending) > 0:
         if 'return_1d' in alert and not pd.isna(alert.get('return_1d')):
             print(f"   1-Day Return: {alert['return_1d']*100:+.1f}%")
 
+# ============================================================================
+# JSON SNAPSHOT + DIFF ENGINE HELPERS
+# ============================================================================
+
+def save_json_snapshot(updated_df, json_dir):
+    """Save a machine-readable JSON snapshot of today's metrics."""
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    out_path = os.path.join(json_dir, f"{today}.json")
+
+    # Build summary dict
+    classified_df = updated_df[updated_df["outcome"].isin(
+        ["confirmed_pump", "likely_pump", "false_positive", "uncertain"]
+    )]
+    pending_df = updated_df[updated_df["outcome"] == "pending"]
+
+    total = len(updated_df)
+    classified = len(classified_df)
+
+    # Precision calculation
+    if classified > 0:
+        pumps = len(classified_df[classified_df["outcome"].isin(
+            ["confirmed_pump", "likely_pump"]
+        )])
+        precision = pumps / classified * 100
+        ci_low, ci_high = wilson_ci(pumps, classified)
+    else:
+        precision, ci_low, ci_high = None, None, None
+
+    # Score bins (only if exists)
+    score_bins = {}
+    if "score_bin" in updated_df.columns:
+        cnts = updated_df["score_bin"].value_counts()
+        score_bins = {str(k): int(v) for k, v in cnts.items()}
+
+    snapshot = {
+        "date": today,
+        "total_alerts": total,
+        "classified": classified,
+        "pending": len(pending_df),
+        "precision": precision,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "outcomes": classified_df["outcome"].value_counts().to_dict(),
+        "score_bins": score_bins,
+    }
+
+    # Write JSON
+    with open(out_path, "w", encoding="utf-8") as fp:
+        json.dump(snapshot, fp, indent=4)
+
+    return out_path
+
+
+def compare_snapshots(today_json_path, json_dir):
+    """Compare today’s snapshot with yesterday’s and return diff text."""
+
+    today_date = os.path.basename(today_json_path).replace(".json", "")
+    yesterday_date = (datetime.strptime(today_date, "%Y-%m-%d") - timedelta(days=1))\
+                        .strftime("%Y-%m-%d")
+    yesterday_path = os.path.join(json_dir, f"{yesterday_date}.json")
+
+    if not os.path.exists(yesterday_path):
+        return "No snapshot for yesterday."
+
+    with open(today_json_path, "r") as f:
+        today = json.load(f)
+    with open(yesterday_path, "r") as f:
+        yest = json.load(f)
+
+    diff = []
+
+    # precision
+    if today.get("precision") and yest.get("precision"):
+        delta = today["precision"] - yest["precision"]
+        diff.append(f"Precision change: {yest['precision']:.1f}% → {today['precision']:.1f}% ({delta:+.1f}%)")
+
+    # total alerts
+    if today["total_alerts"] != yest["total_alerts"]:
+        delta = today["total_alerts"] - yest["total_alerts"]
+        diff.append(f"Total alerts change: {yest['total_alerts']} → {today['total_alerts']} ({delta:+d})")
+
+    # pending
+    if today["pending"] != yest["pending"]:
+        delta = today["pending"] - yest["pending"]
+        diff.append(f"Pending alerts change: {yest['pending']} → {today['pending']} ({delta:+d})")
+
+    if not diff:
+        return "No major changes since yesterday."
+
+    return "\n".join(diff)
+
+
 def generate_markdown_report(updated_df):
 
     # Use global WEEKLY_REVIEWS_DIR from main script
@@ -472,27 +564,35 @@ print("TRACKING COMPLETE")
 print("="*80)
 
 # ============================================================================
-# DAILY SNAPSHOT REPORT
+# DAILY SNAPSHOT (Markdown + JSON + Diff)
 # ============================================================================
 
 DAILY_DIR = os.path.join(RUN_DIR, "daily_snapshots")
 os.makedirs(DAILY_DIR, exist_ok=True)
 
 today = datetime.now().strftime("%Y-%m-%d")
-daily_path = os.path.join(DAILY_DIR, f"{today}.md")
+md_path = os.path.join(DAILY_DIR, f"{today}.md")
 
-with open(daily_path, "w", encoding="utf-8") as f:
+# ---------- SAVE JSON first ----------
+json_path = save_json_snapshot(updated_df, DAILY_DIR)
+
+# ---------- Compute diff ----------
+diff_text = compare_snapshots(json_path, DAILY_DIR)
+
+# ---------- Build Markdown ----------
+with open(md_path, "w", encoding="utf-8") as f:
+
     f.write(f"# 📅 Daily Pump Detector Snapshot – {today}\n\n")
 
-    # Summary metrics
+    # High-level metrics
     f.write(f"- Total alerts: **{len(updated_df)}**\n")
     f.write(f"- Classified alerts: **{len(classified)}**\n")
     f.write(f"- Pending alerts: **{len(pending)}**\n")
 
     if precision is not None:
-        f.write(f"- Precision: **{precision:.1f}%** (CI {low:.1f}–{high:.1f}%)\n")
+        f.write(f"- Precision: **{precision:.1f}%** (95% CI {low:.1f}–{high:.1f}%)\n")
     else:
-        f.write("- Precision: Not enough classified alerts yet.\n")
+        f.write("- Precision: Not enough data yet.\n")
 
     # Outcome distribution
     f.write("\n## 📊 Outcome Distribution\n")
@@ -502,23 +602,18 @@ with open(daily_path, "w", encoding="utf-8") as f:
         for outcome, cnt in classified_df["outcome"].value_counts().items():
             f.write(f"- {outcome}: **{cnt}**\n")
 
-    # Score bin summary (if exists)
+    # Score bins
     if "score_bin" in updated_df.columns:
         f.write("\n## 🎯 Score Bins\n")
-        score_counts = updated_df["score_bin"].value_counts()
-        for rng, cnt in score_counts.items():
+        for rng, cnt in updated_df["score_bin"].value_counts().items():
             f.write(f"- {rng}: **{cnt} alerts**\n")
 
-    # Compare with yesterday
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_path = os.path.join(DAILY_DIR, f"{yesterday}.md")
-
+    # Diff vs yesterday
     f.write("\n## 🔄 Change vs Yesterday\n")
-    if os.path.exists(yesterday_path):
-        f.write(f"- Previous snapshot found ({yesterday}) – compare manually.\n")
-    else:
-        f.write("- No snapshot for yesterday.\n")
+    f.write(diff_text + "\n")
 
-print(f"Daily snapshot saved to: {daily_path}")
+print(f"Daily MD snapshot saved to: {md_path}")
+print(f"Daily JSON snapshot saved to: {json_path}")
+
 print(f"\nRun this script daily to update outcomes as they mature.")
 print(f"Alerts need 5+ days to be classified as pumps or false positives.")
