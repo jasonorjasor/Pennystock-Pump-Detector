@@ -465,6 +465,27 @@ Generated: **{today}**
 
 generate_markdown_report(updated_df)
 
+# ------------------------------------------------------------------
+# DAILY SNAPSHOT REPORT
+# ------------------------------------------------------------------
+
+DAILY_DIR = os.path.join(RUN_DIR, "daily_snapshots")
+os.makedirs(DAILY_DIR, exist_ok=True)
+
+today = datetime.now().strftime("%Y-%m-%d")
+daily_path = os.path.join(DAILY_DIR, f"{today}.md")
+
+with open(daily_path, "w", encoding="utf-8") as f:
+    f.write(f"# 📅 Daily Pump Detector Snapshot – {today}\n\n")
+    f.write(f"- Total alerts so far: **{len(updated_df)}**\n")
+    f.write(f"- Classified alerts: **{len(classified)}**\n")
+    f.write(f"- Pending alerts: **{len(pending)}**\n")
+
+    if precision is not None:
+        f.write(f"- Precision: **{precision:.1f}%** (CI {low:.1f}–{high:.1f}%)\n")
+
+
+print(f"Daily snapshot saved to: {daily_path}")
 print("\n" + "="*80)
 print("TRACKING COMPLETE")
 print("="*80)
