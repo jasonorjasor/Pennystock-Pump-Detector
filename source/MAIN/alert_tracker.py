@@ -465,9 +465,15 @@ Generated: **{today}**
 
 generate_markdown_report(updated_df)
 
-# ------------------------------------------------------------------
+
+print(f"Daily snapshot saved to: {daily_path}")
+print("\n" + "="*80)
+print("TRACKING COMPLETE")
+print("="*80)
+
+# ============================================================================
 # DAILY SNAPSHOT REPORT
-# ------------------------------------------------------------------
+# ============================================================================
 
 DAILY_DIR = os.path.join(RUN_DIR, "daily_snapshots")
 os.makedirs(DAILY_DIR, exist_ok=True)
@@ -477,17 +483,42 @@ daily_path = os.path.join(DAILY_DIR, f"{today}.md")
 
 with open(daily_path, "w", encoding="utf-8") as f:
     f.write(f"# 📅 Daily Pump Detector Snapshot – {today}\n\n")
-    f.write(f"- Total alerts so far: **{len(updated_df)}**\n")
+
+    # Summary metrics
+    f.write(f"- Total alerts: **{len(updated_df)}**\n")
     f.write(f"- Classified alerts: **{len(classified)}**\n")
     f.write(f"- Pending alerts: **{len(pending)}**\n")
 
     if precision is not None:
         f.write(f"- Precision: **{precision:.1f}%** (CI {low:.1f}–{high:.1f}%)\n")
+    else:
+        f.write("- Precision: Not enough classified alerts yet.\n")
 
+    # Outcome distribution
+    f.write("\n## 📊 Outcome Distribution\n")
+    if len(classified) == 0:
+        f.write("No classified alerts yet.\n")
+    else:
+        for outcome, cnt in classified_df["outcome"].value_counts().items():
+            f.write(f"- {outcome}: **{cnt}**\n")
+
+    # Score bin summary (if exists)
+    if "score_bin" in updated_df.columns:
+        f.write("\n## 🎯 Score Bins\n")
+        score_counts = updated_df["score_bin"].value_counts()
+        for rng, cnt in score_counts.items():
+            f.write(f"- {rng}: **{cnt} alerts**\n")
+
+    # Compare with yesterday
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_path = os.path.join(DAILY_DIR, f"{yesterday}.md")
+
+    f.write("\n## 🔄 Change vs Yesterday\n")
+    if os.path.exists(yesterday_path):
+        f.write(f"- Previous snapshot found ({yesterday}) – compare manually.\n")
+    else:
+        f.write("- No snapshot for yesterday.\n")
 
 print(f"Daily snapshot saved to: {daily_path}")
-print("\n" + "="*80)
-print("TRACKING COMPLETE")
-print("="*80)
 print(f"\nRun this script daily to update outcomes as they mature.")
 print(f"Alerts need 5+ days to be classified as pumps or false positives.")
