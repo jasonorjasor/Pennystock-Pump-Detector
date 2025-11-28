@@ -181,6 +181,16 @@ updated_df = pd.DataFrame(updated_rows)
 updated_df.to_csv(ALERTS_HISTORY_FILE, index=False)
 print(f"\nUpdated alerts saved to {ALERTS_HISTORY_FILE}")
 
+if "pump_score" in updated_df.columns:
+    bins = [0, 55, 60, 70, 200]
+    labels = ["≤55", "55–60", "60–70", "70+"]
+    updated_df["score_bin"] = pd.cut(
+        updated_df["pump_score"],
+        bins=bins,
+        labels=labels,
+        include_lowest=True
+    )
+
 # ============================================================================
 # REPORT HELPERS: Wilson CI
 # ============================================================================
@@ -216,6 +226,10 @@ print(f"\nTotal Alerts: {len(updated_df)}")
 print(f"  Classified: {len(classified)}")
 print(f"  Pending (< 5 days old): {len(pending)}")
 
+precision = None
+low = None
+high = None
+
 if len(classified) > 0:
     print(f"\nOutcome Distribution:")
     outcome_counts = classified['outcome'].value_counts()
@@ -230,6 +244,8 @@ if len(classified) > 0:
     trials = len(classified)
     precision = (successes / trials * 100.0) if trials > 0 else float("nan")
     ci_low, ci_high = wilson_ci(successes, trials)
+    low, high = ci_low, ci_high
+
 
     # Coverage
     coverage_pct = (trials / len(updated_df) * 100.0) if len(updated_df) > 0 else 0.0
@@ -402,6 +418,7 @@ def generate_markdown_report(updated_df):
     # -------------------------
     # Precision + CI
     # -------------------------
+
     if classified > 0:
         pumps = len(classified_df[classified_df["outcome"].isin(
             ["confirmed_pump", "likely_pump"]
@@ -558,7 +575,6 @@ Generated: **{today}**
 generate_markdown_report(updated_df)
 
 
-print(f"Daily snapshot saved to: {daily_path}")
 print("\n" + "="*80)
 print("TRACKING COMPLETE")
 print("="*80)
@@ -589,24 +605,34 @@ with open(md_path, "w", encoding="utf-8") as f:
     f.write(f"- Classified alerts: **{len(classified)}**\n")
     f.write(f"- Pending alerts: **{len(pending)}**\n")
 
-    if precision is not None:
-        f.write(f"- Precision: **{precision:.1f}%** (95% CI {low:.1f}–{high:.1f}%)\n")
+    if precision is not None and low is not None and high is not None:
+        precision_str = f"{precision:.1f}% (95% CI {low:.1f}–{high:.1f}%)"
     else:
-        f.write("- Precision: Not enough data yet.\n")
+        precision_str = "Not enough classified alerts yet"
+
+    f.write(f"- Precision: **{precision_str}**\n")
 
     # Outcome distribution
     f.write("\n## 📊 Outcome Distribution\n")
     if len(classified) == 0:
         f.write("No classified alerts yet.\n")
     else:
-        for outcome, cnt in classified_df["outcome"].value_counts().items():
+        for outcome, cnt in classified["outcome"].value_counts().items():
             f.write(f"- {outcome}: **{cnt}**\n")
 
     # Score bins
-    if "score_bin" in updated_df.columns:
+    if "pump_score" in updated_df.columns:
         f.write("\n## 🎯 Score Bins\n")
-        for rng, cnt in updated_df["score_bin"].value_counts().items():
-            f.write(f"- {rng}: **{cnt} alerts**\n")
+        bins = [0, 55, 60, 70, 200]
+        labels = ["≤55", "55–60", "60–70", "70+"]
+
+        tmp = updated_df.dropna(subset=["pump_score"]).copy()
+        if not tmp.empty:
+            tmp["score_bin"] = pd.cut(tmp["pump_score"], bins=bins, labels=labels, include_lowest=True)
+            score_counts = tmp["score_bin"].value_counts().reindex(labels, fill_value=0)
+
+            for rng, cnt in score_counts.items():
+                f.write(f"- {rng}: **{cnt} alerts**\n")
 
     # Diff vs yesterday
     f.write("\n## 🔄 Change vs Yesterday\n")
