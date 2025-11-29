@@ -51,56 +51,7 @@ alerts_df['alert_price'] = pd.to_numeric(alerts_df['alert_price'])
 print(f"\nLoaded {len(alerts_df)} historical alerts")
 print(f"Date range: {alerts_df['alert_date'].min().date()} to {alerts_df['alert_date'].max().date()}")
 
-# ============================================================================
-# FORWARD RETURNS + OUTCOME RULES
-# ============================================================================
 
-def get_forward_returns(ticker, alert_date, alert_price, days_list):
-    """Calculate returns at multiple time horizons after alert."""
-    try:
-        # Download data from alert date + 30 days to cover all horizons
-        start = alert_date
-        end = alert_date + timedelta(days=30)
-        df = yf.download(ticker, start=start, end=end, progress=False)
-
-        # Flatten multiindex columns if present
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-
-        if df.empty:
-            return {f'return_{d}d': None for d in days_list} | {
-                'max_drawdown': None, 'days_to_bottom': None
-            }
-
-        # Restrict to days on/after alert_date
-        future_prices = df[df.index >= alert_date]
-        returns = {}
-
-        for target_days in days_list:
-            # Pick the Nth bar after alert_date if exists; else None
-            if len(future_prices) > target_days:
-                actual_price = future_prices.iloc[min(target_days, len(future_prices) - 1)]['Close']
-                ret = (actual_price - alert_price) / alert_price
-                returns[f'return_{target_days}d'] = ret
-            else:
-                returns[f'return_{target_days}d'] = None
-
-        # Max drawdown relative to alert price (even if later recovered)
-        if len(future_prices) > 0:
-            future_returns = (future_prices['Close'] - alert_price) / alert_price
-            returns['max_drawdown'] = future_returns.min()
-            returns['days_to_bottom'] = future_returns.idxmin()
-        else:
-            returns['max_drawdown'] = None
-            returns['days_to_bottom'] = None
-
-        return returns
-
-    except Exception as e:
-        print(f"    Error fetching {ticker}: {e}")
-        return {f'return_{d}d': None for d in days_list} | {
-            'max_drawdown': None, 'days_to_bottom': None
-        }
 
 def classify_outcome(row):
     """Classify alert outcome based on forward returns."""
@@ -135,41 +86,133 @@ def classify_outcome(row):
 
     return 'likely_pump'
 
+
 # ============================================================================
-# UPDATE ALERTS WITH OUTCOMES
+# BATCH DOWNLOAD ALL TICKER DATA (ONCE)
+# ============================================================================
+
+print("\nBatch downloading price data for all tickers...")
+
+# Get unique tickers and date range
+unique_tickers = alerts_df['ticker'].unique().tolist()
+earliest_date = alerts_df['alert_date'].min()
+latest_date = datetime.now()
+
+print(f"  Downloading {len(unique_tickers)} tickers from {earliest_date.date()} to {latest_date.date()}...")
+
+# Download all at once
+try:
+    all_data = yf.download(
+        unique_tickers, 
+        start=earliest_date, 
+        end=latest_date + timedelta(days=1),
+        progress=False,
+        group_by='ticker'
+    )
+    
+    # Handle single ticker case (no multiindex)
+    if len(unique_tickers) == 1:
+        all_data = {unique_tickers[0]: all_data}
+    else:
+        # Convert to dict of dataframes for easy lookup
+        ticker_data = {}
+        for ticker in unique_tickers:
+            try:
+                if ticker in all_data.columns.levels[0]:
+                    ticker_data[ticker] = all_data[ticker]
+            except (KeyError, AttributeError):
+                pass
+        all_data = ticker_data
+    
+    print(f"  ✓ Downloaded data for {len(all_data)} tickers")
+    
+except Exception as e:
+    print(f"  ✗ Batch download failed: {e}")
+    print("  Falling back to per-ticker downloads...")
+    all_data = {}
+
+
+# ============================================================================
+# UPDATE ALERTS WITH OUTCOMES (using cached data)
 # ============================================================================
 
 print("\nCalculating outcomes for alerts...")
-print("This may take a minute depending on number of alerts...")
+
+def get_forward_returns_cached(ticker, alert_date, alert_price, days_list, cached_data):
+    """Calculate returns using pre-downloaded data."""
+    
+    # Try to use cached data first
+    if ticker in cached_data:
+        df = cached_data[ticker].copy()
+        
+        # Flatten multiindex if present
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+    else:
+        # Fallback: download this ticker individually
+        try:
+            start = alert_date
+            end = alert_date + timedelta(days=30)
+            df = yf.download(ticker, start=start, end=end, progress=False)
+            
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
+        except Exception as e:
+            print(f"    Error fetching {ticker}: {e}")
+            return {f'return_{d}d': None for d in days_list} | {
+                'max_drawdown': None, 'days_to_bottom': None
+            }
+    
+    if df.empty:
+        return {f'return_{d}d': None for d in days_list} | {
+            'max_drawdown': None, 'days_to_bottom': None
+        }
+    
+    # Restrict to days on/after alert_date
+    future_prices = df[df.index >= alert_date]
+    returns = {}
+    
+    for target_days in days_list:
+        if len(future_prices) > target_days:
+            actual_price = future_prices.iloc[target_days]['Close']
+            ret = (actual_price - alert_price) / alert_price
+            returns[f'return_{target_days}d'] = ret
+        else:
+            returns[f'return_{target_days}d'] = None
+    
+    # Max drawdown relative to alert price
+    if len(future_prices) > 0:
+        future_returns = (future_prices['Close'] - alert_price) / alert_price
+        returns['max_drawdown'] = future_returns.min()
+        returns['days_to_bottom'] = future_returns.idxmin()
+    else:
+        returns['max_drawdown'] = None
+        returns['days_to_bottom'] = None
+    
+    return returns
+
 
 updated_rows = []
 for idx, row in alerts_df.iterrows():
     ticker = row['ticker']
     alert_date = row['alert_date']
     alert_price = row['alert_price']
-
-    # Skip if already has outcome (unless pending) and recent
-    if 'outcome' in row and row['outcome'] not in ['pending', None, '']:
-        days_since = (datetime.now() - alert_date).days
-        if days_since < 10:  # keep recent labels; revisit older ones
-            updated_rows.append(row)
-            continue
-
+    
     days_since = (datetime.now() - alert_date).days
     print(f"  {ticker:6s} ({alert_date.date()}) - {days_since} days ago...", end=" ")
-
-    # Get forward returns
-    returns = get_forward_returns(ticker, alert_date, alert_price, TRACKING_DAYS)
-
+    
+    # Get forward returns using cached data
+    returns = get_forward_returns_cached(ticker, alert_date, alert_price, TRACKING_DAYS, all_data)
+    
     # Update row with new data
     for key, value in returns.items():
         row[key] = value
-
+    
     # Classify outcome
     row['outcome'] = classify_outcome(row)
     row['days_since_alert'] = days_since
-    row['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
+    row['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+    
     print(f"{row['outcome']}")
     updated_rows.append(row)
 
