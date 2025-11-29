@@ -118,9 +118,14 @@ try:
         ticker_data = {}
         for ticker in unique_tickers:
             try:
-                if ticker in all_data.columns.levels[0]:
-                    ticker_data[ticker] = all_data[ticker]
-            except (KeyError, AttributeError):
+                # Handle MultiIndex properly
+                if isinstance(all_data.columns, pd.MultiIndex):
+                    if ticker in all_data.columns.get_level_values(0):
+                        ticker_data[ticker] = all_data[ticker].copy()
+                else:
+                    # Single ticker or flat columns - just copy
+                    ticker_data[ticker] = all_data.copy()
+            except (KeyError, AttributeError, ValueError):
                 pass
         all_data = ticker_data
     
@@ -131,6 +136,11 @@ except Exception as e:
     print("  Falling back to per-ticker downloads...")
     all_data = {}
 
+# Check
+if len(all_data) == 0 and len(unique_tickers) > 0:
+    print("\n⚠ WARNING: Could not download any ticker data.")
+    print("  Results will show 'pending' for all alerts.")
+    print("  Check your internet connection or yfinance API status.\n")
 
 # ============================================================================
 # UPDATE ALERTS WITH OUTCOMES (using cached data)
@@ -184,7 +194,8 @@ def get_forward_returns_cached(ticker, alert_date, alert_price, days_list, cache
     if len(future_prices) > 0:
         future_returns = (future_prices['Close'] - alert_price) / alert_price
         returns['max_drawdown'] = future_returns.min()
-        returns['days_to_bottom'] = future_returns.idxmin()
+        bottom_ts = future_returns.idxmin()
+        returns['days_to_bottom'] = (bottom_ts - alert_date).days if bottom_ts is not pd.NaT else None
     else:
         returns['max_drawdown'] = None
         returns['days_to_bottom'] = None
@@ -198,7 +209,7 @@ for idx, row in alerts_df.iterrows():
     alert_date = row['alert_date']
     alert_price = row['alert_price']
     
-    days_since = (datetime.now() - alert_date).days
+    days_since = max(0, (datetime.now() - alert_date).days)
     print(f"  {ticker:6s} ({alert_date.date()}) - {days_since} days ago...", end=" ")
     
     # Get forward returns using cached data
@@ -348,6 +359,17 @@ if len(pending) > 0:
 # ============================================================================
 # JSON SNAPSHOT + DIFF ENGINE HELPERS
 # ============================================================================
+def json_safe(obj):
+    """Convert numpy/pandas types to JSON-serializable types."""
+    if isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, (pd.Timestamp, datetime)):
+        return obj.strftime("%Y-%m-%d")
+    if pd.isna(obj):
+        return None
+    return obj
 
 def save_json_snapshot(updated_df, json_dir):
     """Save a machine-readable JSON snapshot of today's metrics."""
@@ -382,14 +404,14 @@ def save_json_snapshot(updated_df, json_dir):
 
     snapshot = {
         "date": today,
-        "total_alerts": total,
-        "classified": classified,
-        "pending": len(pending_df),
-        "precision": precision,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "outcomes": classified_df["outcome"].value_counts().to_dict(),
-        "score_bins": score_bins,
+        "total_alerts": int(total),
+        "classified": int(classified),
+        "pending": int(len(pending_df)),
+        "precision": json_safe(precision),
+        "ci_low": json_safe(ci_low),
+        "ci_high": json_safe(ci_high),
+        "outcomes": {k: int(v) for k, v in classified_df["outcome"].value_counts().to_dict().items()},
+        "score_bins": score_bins,  # Already converted to int in lines above
     }
 
     # Write JSON
@@ -466,16 +488,8 @@ def generate_markdown_report(updated_df):
         pumps = len(classified_df[classified_df["outcome"].isin(
             ["confirmed_pump", "likely_pump"]
         )])
-
-        p = pumps / classified
-        z = 1.96
-
-        denom = 1 + (z*z)/classified
-        center = p + (z*z)/(2*classified)
-        margin = z * sqrt((p*(1-p) + (z*z)/(4*classified)) / classified)
-        low = (center - margin)/denom * 100
-        high = (center + margin)/denom * 100
-        precision = p * 100
+        precision = (pumps / classified) * 100
+        low, high = wilson_ci(pumps, classified)
     else:
         precision = None
         low = None
@@ -648,8 +662,12 @@ with open(md_path, "w", encoding="utf-8") as f:
     f.write(f"- Classified alerts: **{len(classified)}**\n")
     f.write(f"- Pending alerts: **{len(pending)}**\n")
 
-    if precision is not None and low is not None and high is not None:
-        precision_str = f"{precision:.1f}% (95% CI {low:.1f}–{high:.1f}%)"
+# Recompute precision for daily snapshot
+    if len(classified) > 0:
+        daily_pumps = len(classified[classified['outcome'].isin(['confirmed_pump', 'likely_pump'])])
+        daily_precision = (daily_pumps / len(classified)) * 100
+        daily_low, daily_high = wilson_ci(daily_pumps, len(classified))
+        precision_str = f"{daily_precision:.1f}% (95% CI {daily_low:.1f}–{daily_high:.1f}%)"
     else:
         precision_str = "Not enough classified alerts yet"
 
