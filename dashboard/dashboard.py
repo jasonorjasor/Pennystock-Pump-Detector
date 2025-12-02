@@ -223,26 +223,12 @@ if not classified.empty and "outcome" in classified.columns:
     precision = 100.0 * pumps / len(classified) if len(classified) > 0 else None
     ci_low, ci_high = wilson_ci(pumps, len(classified)) if len(classified) > 0 else (None, None)
 
-from math import sqrt  # keep at top of file if you prefer
-
 # --- Coverage & FP rate ---
 classified_count = len(classified)
 coverage = (classified_count / total_alerts * 100.0) if total_alerts > 0 else 0.0
 
 false_positives = classified[classified["outcome"].astype(str) == "false_positive"] if not classified.empty else classified
 fp_rate = (len(false_positives) / classified_count * 100.0) if classified_count > 0 else 0.0
-
-# --- Wilson CI for precision ---
-def wilson_ci(successes: int, trials: int, z: float = 1.96):
-    if trials == 0:
-        return (None, None)
-    p = successes / trials
-    denom = 1.0 + (z * z) / trials
-    centre = p + (z * z) / (2.0 * trials)
-    margin = z * sqrt((p * (1.0 - p) + (z * z) / (4.0 * trials)) / trials)
-    low = (centre - margin) / denom
-    high = (centre + margin) / denom
-    return low * 100.0, high * 100.0
 
 if precision is not None:
     pumps = is_pump_series(classified["outcome"]).sum()
@@ -259,7 +245,7 @@ c1.metric("Total Alerts", f"{total_alerts}")
 c2.metric("Coverage", f"{coverage:.1f}%")
 c3.metric("Precision", f"{precision:.1f}%" if precision is not None else "N/A")
 if (ci_low is not None) and (ci_high is not None):
-    c3.caption(f"95% CI: {ci_low:.1f}–{ci_high:.1f}%")
+    c3.caption(f"95% CI: {ci_low:.1f}—{ci_high:.1f}%")
 c4.metric("FP Rate", f"{fp_rate:.1f}%")
 c5.metric("Avg Score", f"{avg_score:.1f}" if avg_score is not None else "—")
 

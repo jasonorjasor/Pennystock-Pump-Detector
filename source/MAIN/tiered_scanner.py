@@ -146,6 +146,8 @@ last_pump_dates = {t: get_last_pump_date(t, master_df) for t in intervals_df['ti
 
 def calculate_pump_score(ticker_data):
     df = ticker_data.copy()
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.ffill().bfill()
     df['vol_z'] = (df['Volume'] - df['Volume'].rolling(20).mean()) / \
                   (df['Volume'].rolling(20).std() + 1e-9)
     df['vol_ratio'] = df['Volume'] / (df['Volume'].rolling(20).mean() + 1e-9)
@@ -169,6 +171,9 @@ def calculate_pump_score(ticker_data):
 
     synergy = (df['vol_trend'] > 1.2) & (df['return'] > 0.1)
     df.loc[synergy, 'pump_score'] += 10
+    synergy2 = (df['price_z'] > 2.5) & (df['vol_ratio'] > 2)
+    df.loc[synergy2, 'pump_score'] += 10
+
     return df
 
 # ============================================================================
@@ -207,13 +212,23 @@ def check_ticker(ticker, tier, last_pump_date, avg_gap):
                 'alert_date': latest_date,
                 'pump_score': latest['pump_score'],
                 'alert_price': latest['Close'],
+                # scanner-specific metadata
                 'volume': latest['Volume'],
                 'vol_z': latest['vol_z'],
                 'daily_return': latest['return'],
                 'days_since_last': days_since_last,
                 'status': status,
-                'outcome': 'pending'  # Will be updated by tracker
+                # fields expected by alert_tracker
+                'return_1d': None,
+                'return_5d': None,
+                'return_10d': None,
+                'max_drawdown': None,
+                'days_to_bottom': None,
+                'days_since_alert': 0,
+                'last_updated': None,
+                'outcome': 'pending'
             }
+
         return None
     except Exception as e:
         print(f"  Error checking {ticker}: {e}")
@@ -291,7 +306,7 @@ def log_alerts_to_history(alerts):
 
             duplicate = history_df[
                 (history_df['ticker'] == ticker) &
-                (history_df['alert_date'] == date)
+                (history_df['alert_date'].dt.date == date.date())
             ]
             if len(duplicate) == 0:
                 history_df = pd.concat([history_df, pd.DataFrame([new_alert])], ignore_index=True)
