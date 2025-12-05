@@ -1,0 +1,5 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+IXHL,tier1,2025-12-03,95.0,0.44699999690055847,219678800.0,4.230582927429589,0.1259445346521424,71,OVERDUE,,,,,,0,,pending
+IXHL,tier2,2025-12-03,95.0,0.44699999690055847,219678800.0,4.230582927429589,0.1259445346521424,71,OVERDUE,,,,,,0,,pending
+MBRX,tier1,2025-12-03,55.0,7.590000152587891,164700.0,0.6589045686349219,0.144796383344848,98,OVERDUE,,,,,,0,,pending
+MBRX,tier2,2025-12-03,55.0,7.590000152587891,164700.0,0.6589045686349219,0.144796383344848,98,OVERDUE,,,,,,0,,pending
