@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+CENN,tier1,2025-12-05,75.0,0.18649999797344208,11284600.0,3.0190383393726385,0.10682487307041022,58,OVERDUE,,,,,,0,,pending
+CENN,tier2,2025-12-05,75.0,0.18649999797344208,11284600.0,3.0190383393726385,0.10682487307041022,58,OVERDUE,,,,,,0,,pending
