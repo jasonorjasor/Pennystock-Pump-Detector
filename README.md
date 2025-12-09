@@ -381,9 +381,7 @@ This is a personal portfolio project, but suggestions are welcome! Open an issue
 
 ## 📧 Contact
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your Name](https://linkedin.com/in/yourprofile)
-- Email: your.email@example.com
+- Email: jasonorjasor@gmail.com
 
 ---
 
