@@ -206,7 +206,7 @@ The 78.6% precision from rule-based scoring demonstrates strong baseline perform
 ### Installation
 ```bash
 # Clone repo
-git clone https://github.com/yourusername/pump-detector.git
+git clone https://github.com/jasonorjasor/pump-detector.git
 cd pump-detector
 
 # Install dependencies
