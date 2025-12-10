@@ -1,0 +1,4 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+ARBK,tier1,2025-12-09,100.0,0.18799999356269836,12140100.0,4.074409065384029,0.13939385510454616,64.0,OVERDUE,,,,,,0,,pending
+RVPH,tier1,2025-12-09,60.0,0.6899999976158142,9418400.0,2.934158973992887,0.11290321340173892,,NEW,,,,,,0,,pending
+MBRX,tier1,2025-12-09,55.0,6.630000114440918,2368900.0,3.9897714222906453,-0.08551722559435615,104.0,OVERDUE,,,,,,0,,pending
