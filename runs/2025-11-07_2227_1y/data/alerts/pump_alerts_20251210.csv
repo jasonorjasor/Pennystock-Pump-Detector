@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+MODD,tier1,2025-12-10,55.0,0.3140000104904175,3312327.0,4.10763763078075,-0.3053096992121439,89,OVERDUE,,,,,,0,,pending
+MODD,tier2,2025-12-10,55.0,0.3140000104904175,3312327.0,4.10763763078075,-0.3053096992121439,89,OVERDUE,,,,,,0,,pending
