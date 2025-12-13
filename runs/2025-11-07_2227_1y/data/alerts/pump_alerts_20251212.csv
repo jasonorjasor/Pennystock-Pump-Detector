@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+ARBK,tier1,2025-12-12,55.0,6.869999885559082,1769523.0,4.246080341399567,-0.7760172245914143,67,OVERDUE,,,,,,0,,pending
+ARBK,tier2,2025-12-12,55.0,6.869999885559082,1769523.0,4.246080341399567,-0.7760172245914143,67,OVERDUE,,,,,,0,,pending
