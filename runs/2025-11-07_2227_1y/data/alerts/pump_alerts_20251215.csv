@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+PCSA,tier1,2025-12-15,55.0,0.14149999618530273,13080506.0,4.181634874823364,-0.47592596087926564,68,OVERDUE,,,,,,0,,pending
+PCSA,tier2,2025-12-15,55.0,0.14149999618530273,13080506.0,4.181634874823364,-0.47592596087926564,68,OVERDUE,,,,,,0,,pending
