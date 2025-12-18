@@ -1,0 +1,5 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+PCSA,tier1,2025-12-17,130.0,6.679999828338623,39329400.0,4.248058071988202,1.2266666094462075,70,OVERDUE,,,,,,0,,pending
+PCSA,tier2,2025-12-17,130.0,6.679999828338623,39329400.0,4.248058071988202,1.2266666094462075,70,OVERDUE,,,,,,0,,pending
+MBRX,tier1,2025-12-17,55.0,4.139999866485596,5950100.0,3.9248961959372552,-0.11727082815022871,112,OVERDUE,,,,,,0,,pending
+MBRX,tier2,2025-12-17,55.0,4.139999866485596,5950100.0,3.9248961959372552,-0.11727082815022871,112,OVERDUE,,,,,,0,,pending
