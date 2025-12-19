@@ -1,0 +1,21 @@
+{
+    "date": "2025-12-18",
+    "total_alerts": 31,
+    "classified": 23,
+    "pending": 8,
+    "precision": 56.52173913043478,
+    "ci_low": 36.811049305016965,
+    "ci_high": 74.36563166780135,
+    "outcomes": {
+        "confirmed_pump": 11,
+        "false_positive": 7,
+        "uncertain": 3,
+        "likely_pump": 2
+    },
+    "score_bins": {
+        "\u226455": 12,
+        "70+": 11,
+        "60\u201370": 7,
+        "55\u201360": 1
+    }
+}
