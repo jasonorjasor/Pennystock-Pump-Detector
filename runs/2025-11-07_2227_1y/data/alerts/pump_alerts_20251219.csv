@@ -1,0 +1,5 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+AZI,tier1,2025-12-19,130.0,2.5,84850100.0,3.845741910093108,0.6447368627439909,88,OVERDUE,,,,,,0,,pending
+AZI,tier2,2025-12-19,130.0,2.5,84850100.0,3.845741910093108,0.6447368627439909,88,OVERDUE,,,,,,0,,pending
+NAKA,tier1,2025-12-19,55.0,0.39399999380111694,13830700.0,-0.1033824236653469,0.12571428717399136,94,OVERDUE,,,,,,0,,pending
+NAKA,tier2,2025-12-19,55.0,0.39399999380111694,13830700.0,-0.1033824236653469,0.12571428717399136,94,OVERDUE,,,,,,0,,pending

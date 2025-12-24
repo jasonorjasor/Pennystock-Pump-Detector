@@ -1,0 +1,3 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+AZI,tier1,2025-12-22,75.0,3.319999933242798,40849000.0,1.4546083384731443,0.32799997329711905,91,OVERDUE,,,,,,0,,pending
+AZI,tier2,2025-12-22,75.0,3.319999933242798,40849000.0,1.4546083384731443,0.32799997329711905,91,OVERDUE,,,,,,0,,pending
