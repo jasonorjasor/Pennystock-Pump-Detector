@@ -182,7 +182,7 @@ def calculate_pump_score(ticker_data):
 
 def check_ticker(ticker, tier, last_pump_date, avg_gap):
     try:
-        df = yf.download(ticker, period="60d", interval="1d", progress=False)
+        df = yf.download(ticker, period="60d", interval="1d", progress=False, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
         if df.empty or len(df) < 25:
@@ -190,6 +190,14 @@ def check_ticker(ticker, tier, last_pump_date, avg_gap):
 
         df = calculate_pump_score(df)
         latest = df.iloc[-1]
+        # Sanity filter for bad prints / extreme discontinuities
+        if pd.notna(latest['return']) and abs(latest['return']) > 5.0:  # > 500% in a day
+            print(f"SKIP (extreme daily return {latest['return']*100:.0f}%)")
+            return None
+        
+        if latest['Volume'] <= 0 or pd.isna(latest['Volume']):
+            print("(missing/zero volume, skipping)")
+            return None
         latest_date = df.index[-1]
 
         days_since_last = None

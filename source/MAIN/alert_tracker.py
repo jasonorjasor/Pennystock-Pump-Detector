@@ -75,6 +75,11 @@ def classify_outcome(row):
     # Deep drawdown even if recovered
     if max_dd is not None and max_dd < -0.25:
         return 'confirmed_pump'
+    
+    # Pump-ish: was up at day 5 but faded by day 10 (promo unwind / delayed dump)
+    if (ret_10d is not None) and (ret_5d is not None):
+        if ret_5d > 0.05 and ret_10d < -0.05:
+            return 'likely_pump'   # or 'uncertain' if you want to be conservative
 
     # False positive: sustained gains
     if ret_5d > 0.05:
@@ -107,7 +112,8 @@ try:
         start=earliest_date, 
         end=latest_date + timedelta(days=1),
         progress=False,
-        group_by='ticker'
+        group_by='ticker',
+        auto_adjust=True  # Add this line
     )
     
     # Handle single ticker case (no multiindex)
@@ -163,7 +169,7 @@ def get_forward_returns_cached(ticker, alert_date, alert_price, days_list, cache
         try:
             start = alert_date
             end = alert_date + timedelta(days=30)
-            df = yf.download(ticker, start=start, end=end, progress=False)
+            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
             
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.droplevel(1)
