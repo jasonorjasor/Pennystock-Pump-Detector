@@ -1,0 +1,5 @@
+ticker,tier,alert_date,pump_score,alert_price,volume,vol_z,daily_return,days_since_last,status,return_1d,return_5d,return_10d,max_drawdown,days_to_bottom,days_since_alert,last_updated,outcome
+FEMY,tier1,2025-12-29,55.0,0.6047000288963318,4841003.0,3.4849142318954796,-0.14830979271602673,84,OVERDUE,,,,,,0,,pending
+XHLD,tier1,2025-12-29,55.0,1.409999966621399,1159561.0,4.0777592415426325,-0.15568862104472314,90,OVERDUE,,,,,,0,,pending
+FEMY,tier2,2025-12-29,55.0,0.6047000288963318,4841003.0,3.4849142318954796,-0.14830979271602673,84,OVERDUE,,,,,,0,,pending
+XHLD,tier2,2025-12-29,55.0,1.409999966621399,1159561.0,4.0777592415426325,-0.15568862104472314,90,OVERDUE,,,,,,0,,pending

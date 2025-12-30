@@ -3,28 +3,43 @@ import pandas as pd
 df = pd.read_csv('runs/2025-11-07_2227_1y/data/alerts/alerts_history.csv')
 df['alert_date'] = pd.to_datetime(df['alert_date'])
 
-# 70+ false positives
-fps = df[(df['pump_score'] >= 70) & (df['outcome'] == 'false_positive')][
-    ['ticker', 'alert_date', 'pump_score', 'daily_return', 'vol_z', 'return_5d', 'return_10d', 'days_to_bottom']
+# Filter to classified only
+classified = df[df['outcome'].isin(['confirmed_pump', 'likely_pump', 'false_positive', 'uncertain'])]
+
+print("=== OVERALL METRICS ===")
+print(f"Total alerts: {len(df)}")
+print(f"Classified: {len(classified)}")
+
+if len(classified) > 0:
+    pumps = len(classified[classified['outcome'].isin(['confirmed_pump', 'likely_pump'])])
+    precision = pumps / len(classified) * 100
+    print(f"Precision: {precision:.1f}% ({pumps}/{len(classified)})")
+
+# Check 70+ bin
+high_scores = classified[classified['pump_score'] >= 70]
+if len(high_scores) > 0:
+    pumps_high = len(high_scores[high_scores['outcome'].isin(['confirmed_pump', 'likely_pump'])])
+    precision_high = pumps_high / len(high_scores) * 100
+    print(f"\n70+ Bin: {precision_high:.1f}% ({pumps_high}/{len(high_scores)})")
+
+# Check if the new rule caught any "delayed dumps"
+delayed = df[
+    (df['return_5d'] > 0.05) & 
+    (df['return_10d'].notna()) &
+    (df['return_10d'] < -0.05) &
+    (df['outcome'] == 'likely_pump')
 ]
 
-print("=== 70+ FALSE POSITIVES (The Problem) ===")
-print(fps.to_string(index=False))
-print(f"\nTotal: {len(fps)} alerts")
+print(f"\nDelayed dumps caught: {len(delayed)}")
+if len(delayed) > 0:
+    print(delayed[['ticker', 'alert_date', 'return_5d', 'return_10d']])
 
-# 70+ confirmed pumps
-pumps = df[(df['pump_score'] >= 70) & (df['outcome'].isin(['confirmed_pump', 'likely_pump']))][
-    ['ticker', 'alert_date', 'pump_score', 'daily_return', 'vol_z', 'return_5d', 'return_10d']
-]
+# Show 70+ false positives
+fps_70 = df[(df['pump_score'] >= 70) & (df['outcome'] == 'false_positive')]
+print("=== 70+ FALSE POSITIVES ===")
+print(fps_70[['ticker', 'alert_date', 'pump_score', 'daily_return', 'return_5d', 'return_10d']].to_string(index=False))
 
-print("\n=== 70+ CONFIRMED PUMPS (What's Working) ===")
-print(pumps.to_string(index=False))
-print(f"\nTotal: {len(pumps)} alerts")
-
-# Compare features
-if len(fps) > 0 and len(pumps) > 0:
-    print("\n=== FEATURE COMPARISON ===")
-    print(f"FP avg daily_return:  {fps['daily_return'].mean():.2%}")
-    print(f"Pump avg daily_return: {pumps['daily_return'].mean():.2%}")
-    print(f"FP avg vol_z:         {fps['vol_z'].mean():.2f}")
-    print(f"Pump avg vol_z:       {pumps['vol_z'].mean():.2f}")
+# Show 70+ pumps for comparison
+pumps_70 = df[(df['pump_score'] >= 70) & (df['outcome'].isin(['confirmed_pump', 'likely_pump']))]
+print("\n=== 70+ CONFIRMED PUMPS ===")
+print(pumps_70[['ticker', 'alert_date', 'pump_score', 'daily_return', 'return_5d', 'return_10d']].to_string(index=False))
