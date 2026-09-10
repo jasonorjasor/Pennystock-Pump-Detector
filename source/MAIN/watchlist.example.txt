@@ -1,0 +1,4 @@
+# Copy this file to watchlist.txt and customize it locally.
+# Example symbols demonstrate formatting; they are not recommendations.
+FEMY
+PRPL

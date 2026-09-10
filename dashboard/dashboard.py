@@ -1,523 +1,193 @@
-# dashboard.py
-import os
-import math
+"""Microcap Observatory: daily briefing, explanations, outcomes, and research notes."""
 from pathlib import Path
-from datetime import timedelta
-
+import json
+import sys
 import pandas as pd
 import streamlit as st
-import yfinance as yf
-import altair as alt
-from math import sqrt
 
-# ----------------------------
-# Streamlit config
-# ----------------------------
-st.set_page_config(page_title="Pump-and-Dump Detector — Live Alerts", layout="wide")
-st.title("Pump-and-Dump Detector — Live Alerts Dashboard")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source"))
+from pennystock.core import metrics, score_bins
+from pennystock.pipeline import alerts_with_outcomes, utcnow
+from pennystock.storage import ROOT, DEFAULT_WORKSPACE, read_csv, save_json, writer_lock
 
-# Sidebar utility: clear cache while iterating
-if st.sidebar.button("Clear cache & rerun"):
-    st.cache_data.clear()
-    st.rerun()
+st.set_page_config(page_title="Microcap Observatory", page_icon="🔎", layout="wide")
+st.title("Microcap Observatory")
+st.caption("Unusual activity · Dated observations · Measured outcomes")
 
-# ----------------------------
-# Runs root discovery
-# ----------------------------
-def discover_runs_root() -> Path:
-    """
-    Find the 'runs' directory robustly, whether this file is in project root or a subfolder.
-    Priority:
-      1) RUNS_ROOT env var
-      2) <project_root>/runs near this file (walk up to 5 levels)
-    """
-    env = os.getenv("RUNS_ROOT")
-    if env:
-        p = Path(env).expanduser().resolve()
-        if p.exists() and p.is_dir():
-            return p
 
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parent / "runs",
-        here.parent.parent / "runs",
-        here.parent.parent.parent / "runs",
-    ]
-    for c in candidates:
-        if c.exists() and c.is_dir() and any(c.glob("*/")):
-            return c
+def read_json(path):
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
-    cur = here.parent
-    for _ in range(5):
-        maybe = cur / "runs"
-        if maybe.exists() and maybe.is_dir() and any(maybe.glob("*/")):
-            return maybe
-        cur = cur.parent
-    return None
 
-RUNS_ROOT = discover_runs_root()
-if RUNS_ROOT is None:
-    st.error("Could not locate a 'runs' directory. Set RUNS_ROOT or ensure a runs/ folder exists.")
-    st.stop()
+def show_metrics(frame, legacy=False):
+    m = metrics(frame, legacy)
+    cols = st.columns(4)
+    cols[0].metric("Alerts", m["total"])
+    cols[1].metric("Classified" if legacy else "Final outcomes", m["final"])
+    cols[2].metric("Pending", m["pending"])
+    cols[3].metric("Legacy positive-label share" if legacy else "Sharp reversal share",
+                   "N/A" if m["rate"] is None else f'{m["rate"]:.1f}%')
+    st.caption(f'Outcome completion: {m["completion"]:.1f}%. '
+               "Reversal share uses final outcomes only; ambiguous outcomes remain in the denominator.")
+    if m["ci_low"] is not None:
+        st.caption(f'Wilson interval: {m["ci_low"]:.1f}–{m["ci_high"]:.1f}%. '
+                   "This descriptive interval does not account for dependence between repeated ticker events.")
+    return m
 
-# ----------------------------
-# Helpers: list runs, load alerts, prices, metrics
-# ----------------------------
-def list_run_dirs(root: Path):
-    candidates = [
-        d for d in root.glob("*/")
-        if d.is_dir() and d.name.upper() != "LATEST"
-    ]
-    return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
 
-def alerts_path(run_dir: Path):
-    return run_dir / "data" / "alerts" / "alerts_history.csv"
-
-@st.cache_data(show_spinner=False)
-def try_load_alerts(run_dir: Path):
-    path = alerts_path(run_dir)
-    if not path.exists():
-        return None, str(path)
-
-    df = pd.read_csv(path)
-
-    # Normalize likely date columns
-    for c in [c for c in ["alert_date", "date"] if c in df.columns]:
-        df[c] = pd.to_datetime(df[c], errors="coerce")
-
-    # Normalize string-ish columns
-    for c in ["ticker", "tier", "outcome", "status"]:
-        if c in df.columns:
-            df[c] = df[c].astype(str)
-
-    return df, str(path)
-
-@st.cache_data(show_spinner=False)
-def load_price(ticker: str, start, end):
-    """
-    Robust price loader:
-    1) try yf.download(ticker, start, end)
-    2) fallback to yf.Ticker(ticker).history(period="max") then slice
-    Returns df with columns: ['date','close'] or empty DataFrame.
-    """
-    try:
-        # First attempt: bounded download
-        df1 = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
-        if df1 is not None and not df1.empty:
-            out = df1.rename_axis("date").reset_index()[["date","Close"]].rename(columns={"Close":"close"})
-            return out
-
-        # Fallback: full history then slice
-        tk = yf.Ticker(ticker)
-        df2 = tk.history(period="max", interval="1d", auto_adjust=False)
-        if df2 is not None and not df2.empty:
-            df2 = df2.rename_axis("date").reset_index()
-            df2 = df2[(df2["date"].dt.date >= start) & (df2["date"].dt.date <= end)]
-            if not df2.empty:
-                return df2[["date","Close"]].rename(columns={"Close":"close"})
-    except Exception as e:
-        # Surface error to caller for diagnostics
-        return pd.DataFrame({"__error__":[str(e)]})
-
-    # Nothing worked
-    return pd.DataFrame()
-
-def is_pump_series(s: pd.Series) -> pd.Series:
-    return s.astype(str).isin(["confirmed_pump", "likely_pump"])
-
-def style_outcome(df_show: pd.DataFrame) -> "pd.io.formats.style.Styler":
-    colors = {
-        "confirmed_pump": "#22c55e",   # green
-        "likely_pump":    "#86efac",   # light green
-        "false_positive": "#ef4444",   # red
-        "uncertain":      "#f59e0b",   # amber
-        "pending":        "#cbd5e1",   # slate
-    }
-    def highlight(row):
-        c = colors.get(str(row.get("outcome", "")), None)
-        return [f"background-color: {c}; color: black" if c else "" for _ in row]
-    return df_show.style.apply(highlight, axis=1)
-
-def wilson_ci(successes: int, n: int, z: float = 1.96):
-    """Return (low%, high%) Wilson CI for a binomial proportion, or (None, None) if n==0."""
-    if n == 0:
-        return (None, None)
-    p = successes / n
-    denom = 1 + z*z/n
-    centre = p + z*z/(2*n)
-    margin = z * math.sqrt((p*(1-p) + z*z/(4*n)) / n)
-    low = (centre - margin) / denom
-    high = (centre + margin) / denom
-    return low*100, high*100
-
-# ----------------------------
-# Load run
-# ----------------------------
-runs = list_run_dirs(RUNS_ROOT)
-if not runs:
-    st.error(f"No runs found under {RUNS_ROOT}/.")
-    st.stop()
-
-sel_run = st.sidebar.selectbox(
-    "Select run",
-    options=runs,
-    index=0,
-    format_func=lambda p: str(p.relative_to(RUNS_ROOT))
-)
-
-df, csv_path = try_load_alerts(sel_run)
-st.caption(f"Using latest run: {csv_path.replace('/', os.sep)}")
-
-if df is None or df.empty:
-    st.warning("No alerts_history.csv for this run (or file is empty). Run your scanner.")
-    st.stop()
-
-# ----------------------------
-# Sidebar filters
-# ----------------------------
-with st.sidebar:
-    st.subheader("Filters")
-
-    DATE_COL = "alert_date" if "alert_date" in df.columns else ("date" if "date" in df.columns else None)
-
-    if "tier" in df.columns:
-        tiers = sorted([t for t in df["tier"].dropna().unique()])
-        sel_tiers = st.multiselect("Tier", tiers, default=tiers)
+def main():
+    workspaces = sorted([p.parent for p in (ROOT / "runs").glob("*/workspace.json")], reverse=True)
+    if DEFAULT_WORKSPACE not in workspaces:
+        workspaces.insert(0, DEFAULT_WORKSPACE)
     else:
-        tiers, sel_tiers = [], []
-
-    if "outcome" in df.columns:
-        outcomes = sorted([o for o in df["outcome"].dropna().unique()])
-        sel_outcomes = st.multiselect("Outcome", outcomes, default=outcomes)
+        workspaces.remove(DEFAULT_WORKSPACE)
+        workspaces.insert(0, DEFAULT_WORKSPACE)
+    legacy_paths = sorted((ROOT / "runs").glob("*/data/alerts/alerts_history.csv"), reverse=True)
+    choices = {f"Observatory / {p.name}": (p, False) for p in workspaces}
+    choices.update({f"Legacy / {p.parents[2].name}": (p.parents[2], True) for p in legacy_paths})
+    selected = st.sidebar.selectbox("Dataset", list(choices))
+    workspace, legacy = choices[selected]
+    if st.sidebar.button("Refresh"):
+        st.rerun()
+    if legacy:
+        st.warning("Legacy research: unbounded outcome windows and unversioned rules. "
+                   "These labels are preserved for reference and do not establish manipulation.")
+        alerts = read_csv(workspace / "data/alerts/alerts_history.csv")
+        alerts["session"] = pd.to_datetime(alerts.alert_date).dt.strftime("%Y-%m-%d")
+        obs, manifest = pd.DataFrame(), {}
     else:
-        outcomes, sel_outcomes = [], []
+        alerts = alerts_with_outcomes(workspace)
+        obs = read_csv(workspace / "observations.csv")
+        manifest = read_json(workspace / "latest_scan.json")
+        meta = read_json(workspace / "workspace.json")
+        if meta.get("kind") == "legacy-reconstruction":
+            st.warning("Reconstructed legacy cohort. Scores were not recreated as known at the time. "
+                       "Outcome prices may differ from the original source observations.")
+        if meta.get("kind") == "offline-demo":
+            st.info(f"Offline demonstration using {meta.get('demo_source', 'local archived bars')}. This is not a current scan.")
+    if manifest:
+        st.subheader(f'Session briefing · {manifest["session"]}')
+        expected = len(manifest["universe"])
+        counts = manifest.get("counts", {})
+        healthy = counts.get("alert", 0) + counts.get("no_signal", 0)
+        st.write(f'{healthy}/{expected} tickers successfully checked · {manifest["state"]}')
+        st.caption(f'Finished: {manifest.get("finished_at", "running")} · Source: {manifest["provider"]}')
+        age = (pd.Timestamp.today().normalize() - pd.Timestamp(manifest["session"])).days
+        if age > 4:
+            st.warning(f"The latest recorded scan is {age} calendar days old.")
+        if manifest["state"] != "complete":
+            st.warning("Coverage is incomplete. Missing/failed tickers must not be treated as no-signal results.")
+        with st.expander("Scan health and coverage"):
+            st.json(counts)
+            attempts = read_csv(workspace / "attempts" / manifest["attempt_id"] / "observations.csv")
+            if not attempts.empty:
+                st.dataframe(attempts[[c for c in ["ticker", "tier", "watchlist", "scan_status", "error"] if c in attempts]], hide_index=True)
+    elif not legacy:
+        st.info("No daily scan recorded in this workspace. Run: python observatory.py scan")
+    if not alerts.empty:
+        st.caption(f'Recorded alert sessions: {alerts.session.min()} to {alerts.session.max()}')
+    if not legacy:
+        tracking = read_json(workspace / "latest_tracking.json")
+        if tracking:
+            st.caption(f'Outcome update through {tracking["as_of"]}: {tracking["state"]}')
+            if tracking["state"] == "partial":
+                st.warning("Some outcomes could not be refreshed; prior valid values were retained.")
 
-# Apply filters
-fdf = df.copy()
-if sel_tiers:
-    fdf = fdf[fdf["tier"].isin(sel_tiers)]
-if sel_outcomes:
-    fdf = fdf[fdf["outcome"].isin(sel_outcomes)]
-
-# Early guard if filters hide everything
-if fdf.empty:
-    st.warning("No rows after filters. Clear or change filters to see data.")
-    st.stop()
-
-# ----------------------------
-# KPIs (computed on filtered set)
-# ----------------------------
-st.subheader("Overview")
-
-total_alerts = len(fdf)
-classified_mask = fdf["outcome"].astype(str).isin(
-    ["confirmed_pump", "likely_pump", "false_positive", "uncertain"]
-) if "outcome" in fdf.columns else pd.Series(False, index=fdf.index)
-classified = fdf[classified_mask]
-pending = fdf[fdf["outcome"].astype(str).eq("pending")] if "outcome" in fdf.columns else fdf.iloc[0:0]
-
-precision = None
-ci_low, ci_high = (None, None)
-if not classified.empty and "outcome" in classified.columns:
-    pumps = is_pump_series(classified["outcome"]).sum()
-    precision = 100.0 * pumps / len(classified) if len(classified) > 0 else None
-    ci_low, ci_high = wilson_ci(pumps, len(classified)) if len(classified) > 0 else (None, None)
-
-# --- Coverage & FP rate ---
-classified_count = len(classified)
-coverage = (classified_count / total_alerts * 100.0) if total_alerts > 0 else 0.0
-
-false_positives = classified[classified["outcome"].astype(str) == "false_positive"] if not classified.empty else classified
-fp_rate = (len(false_positives) / classified_count * 100.0) if classified_count > 0 else 0.0
-
-if precision is not None:
-    pumps = is_pump_series(classified["outcome"]).sum()
-    ci_low, ci_high = wilson_ci(pumps, classified_count)
-else:
-    ci_low, ci_high = None, None
-
-# --- Avg score (if available) ---
-avg_score = fdf["pump_score"].mean() if "pump_score" in fdf.columns and not fdf.empty else None
-
-# --- KPI tiles ---
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total Alerts", f"{total_alerts}")
-c2.metric("Coverage", f"{coverage:.1f}%")
-c3.metric("Precision", f"{precision:.1f}%" if precision is not None else "N/A")
-if (ci_low is not None) and (ci_high is not None):
-    c3.caption(f"95% CI: {ci_low:.1f}—{ci_high:.1f}%")
-c4.metric("FP Rate", f"{fp_rate:.1f}%")
-c5.metric("Avg Score", f"{avg_score:.1f}" if avg_score is not None else "—")
-
-
-# ----------------------------
-# Score Distribution Analysis
-# ----------------------------
-st.subheader("Score Distribution Analysis")
-
-if "pump_score" in classified.columns and "outcome" in classified.columns and len(classified) > 5:
-    # Work on a copy to avoid SettingWithCopy warnings
-    classified_bins = classified.copy()
-
-    # Create bins
-    bins = [0, 55, 60, 70, 120]
-    labels = ["50-55", "55-60", "60-70", "70+"]
-    classified_bins["score_bin"] = pd.cut(classified_bins["pump_score"], bins=bins, labels=labels, include_lowest=True)
-    
-    # Calculate metrics per bin
-    bin_analysis = []
-    for bin_label in labels:
-        bin_data = classified_bins[classified_bins["score_bin"] == bin_label]
-        if len(bin_data) > 0:
-            fps = len(bin_data[bin_data["outcome"] == "false_positive"])
-            pumps = len(bin_data[bin_data["outcome"].isin(["confirmed_pump", "likely_pump"])])
-            bin_analysis.append({
-                "Score Range": bin_label,
-                "Count": len(bin_data),
-                "False Positives": fps,
-                "FP Rate (%)": round(fps / len(bin_data) * 100, 1),
-                "Precision (%)": round(pumps / len(bin_data) * 100, 1)
-            })
-    
-    if bin_analysis:
-        bin_df = pd.DataFrame(bin_analysis)
-        st.dataframe(bin_df, use_container_width=True)
-        
-        # Interpretation based on lowest bin
-        bottom_bin = bin_df.iloc[0]
-        if bottom_bin["FP Rate (%)"] > 50:
-            st.warning(
-                f"Scores {bottom_bin['Score Range']} have a {bottom_bin['FP Rate (%)']}% false positive rate. "
-                f"Consider raising the threshold to {bins[1]}."
-            )
+    briefing, performance, detail = st.tabs(["Research queue", "Evaluation", "Ticker notebook"])
+    with briefing:
+        if alerts.empty:
+            st.info("No alerts recorded. A healthy scan can finish with zero alerts.")
         else:
-            st.success("Score distribution looks healthy. Current threshold (50) is appropriate.")
-else:
-    st.info("Need at least 5 classified alerts to show score analysis.")
+            sessions = sorted(alerts.session.unique(), reverse=True)
+            selected_session = st.selectbox("Alert session", ["All sessions"] + sessions)
+            queue = alerts if selected_session == "All sessions" else alerts[alerts.session.eq(selected_session)]
+            outcomes = sorted(queue.outcome.dropna().unique())
+            selected_outcomes = st.multiselect("Queue outcomes", outcomes, default=outcomes)
+            queue = queue[queue.outcome.isin(selected_outcomes)]
+            queue = queue.sort_values(["session", "pump_score"], ascending=[False, False])
+            st.dataframe(queue[[c for c in ["session", "ticker", "tier", "pump_score", "alert_price", "outcome", "state", "daily_return"] if c in queue]], hide_index=True)
+            st.download_button("Download entire filtered queue", queue.to_csv(index=False).encode("utf-8"),
+                               "research_queue.csv", "text/csv")
+            st.caption("Scores are activity points, not probabilities. Price outcomes do not establish manipulation.")
 
-# ----------------------------
-# Alerts Over Time (line)
-# ----------------------------
-if DATE_COL:
-    tmp_count = fdf[[DATE_COL]].dropna().copy()
-    tmp_count["d"] = tmp_count[DATE_COL].dt.to_period("D").dt.start_time
-    by_day = tmp_count.groupby("d").size().reset_index(name="alerts")
-    st.subheader("Alerts Over Time")
-    if not by_day.empty:
-        st.line_chart(by_day.set_index("d")["alerts"])
-    else:
-        st.caption("No dates available to plot.")
+    with performance:
+        st.write("Performance uses the full selected dataset and is independent of queue outcome filters.")
+        show_metrics(alerts, legacy)
+        if not alerts.empty:
+            mature = alerts[alerts.outcome.isin(["confirmed_pump", "likely_pump", "false_positive", "uncertain"])] if legacy else alerts[alerts.state.eq("final")]
+            if not mature.empty:
+                st.subheader("Final outcomes by score")
+                bins = mature.assign(score_bin=score_bins(pd.to_numeric(mature.pump_score)))
+                rows = []
+                for label, group in bins.groupby("score_bin", observed=True):
+                    m = metrics(group, legacy)
+                    rows.append({"Score range": str(label), "Final outcomes": m["final"], "Positive share (%)": m["rate"]})
+                st.dataframe(pd.DataFrame(rows), hide_index=True)
+            st.subheader("By ticker")
+            groups = []
+            for ticker, group in alerts.groupby("ticker"):
+                m = metrics(group, legacy)
+                groups.append({"Ticker": ticker, "Alerts": m["total"], "Final": m["final"], "Pending": m["pending"], "Positive share (%)": m["rate"]})
+            st.dataframe(pd.DataFrame(groups), hide_index=True)
+            st.bar_chart(alerts.outcome.value_counts())
+        st.info("No claim of predictive advantage: matched baselines, event labels, and chronological evaluation are still needed.")
 
-# ----------------------------
-# Outcome Distribution (bar)
-# ----------------------------
-st.subheader("Outcome Distribution")
-if "outcome" in fdf.columns and not fdf.empty:
-    out_counts = fdf["outcome"].value_counts().reset_index()
-    out_counts.columns = ["Outcome", "Count"]
-    chart_out = alt.Chart(out_counts).mark_bar().encode(
-        x=alt.X("Outcome:N", sort="-y"),
-        y=alt.Y("Count:Q")
-    ).properties(height=280)
-    st.altair_chart(chart_out, use_container_width=True)
-else:
-    st.caption("No outcome column to chart yet.")
+    with detail:
+        if alerts.empty:
+            st.info("Ticker explanations and research notes appear after the first alert.")
+        else:
+            ticker = st.selectbox("Ticker", sorted(alerts.ticker.unique()))
+            history = alerts[alerts.ticker.eq(ticker)].sort_values("session")
+            # Episode start date is stable when future observations are appended.
+            dates = pd.to_datetime(history.session)
+            starts = dates.where(dates.diff().dt.days.gt(7) | dates.diff().isna()).ffill()
+            history = history.assign(event_start=starts.dt.strftime("%Y-%m-%d").values)
+            st.dataframe(history[[c for c in ["session", "event_start", "pump_score", "outcome", "return_1d", "return_5d", "return_10d", "worst_return_10d"] if c in history]], hide_index=True)
+            st.caption("Events group signals separated by at most seven calendar days. They are activity clusters, not evidence of coordination.")
+            session = st.selectbox("Observation to inspect", list(reversed(history.session.unique())))
+            row = history[history.session.eq(session)].iloc[0]
+            explanation = row.get("explanation")
+            if isinstance(explanation, str):
+                st.subheader("Why this triggered")
+                reasons = pd.DataFrame(json.loads(explanation))
+                st.dataframe(reasons, hide_index=True)
+                st.caption(f'Rule contributions total: {int(reasons.points.sum())} points. '
+                           "Baseline: previous 20 sessions; current session excluded.")
+            else:
+                st.caption("Full rule contributions were not archived for this legacy observation.")
+            attempt_id = row.get("attempt_id")
+            if isinstance(attempt_id, str):
+                path = workspace / "attempts" / attempt_id / "bars" / f"{ticker}.csv"
+                if path.exists():
+                    bars = pd.read_csv(path, parse_dates=["Date"]).set_index("Date")
+                    st.line_chart(bars[["Close"]])
+                    st.bar_chart(bars[["Volume"]])
+                    st.caption("Archived bars from this observation. Provider adjustment basis is recorded in the scan manifest.")
+            if not legacy:
+                key = f'{ticker}:{row["session"]}'
+                notes_path = workspace / "notes.json"
+                notes = read_json(notes_path)
+                note = notes.get(key, {})
+                with st.form("research_note"):
+                    text = st.text_area("Research note", value=note.get("text", ""))
+                    url = st.text_input("Evidence URL", value=note.get("url", ""))
+                    source_time = st.text_input("Source publication time (if known)", value=note.get("source_time", ""))
+                    reviewed = st.checkbox("Reviewed", value=note.get("reviewed", False))
+                    submitted = st.form_submit_button("Save note")
+                if submitted:
+                    if url and not url.startswith(("https://", "http://")):
+                        st.error("Use an http or https evidence URL.")
+                    else:
+                        with writer_lock(workspace):
+                            notes = read_json(notes_path)
+                            notes[key] = {"text": text, "url": url, "source_time": source_time,
+                                          "reviewed": reviewed, "updated_at": utcnow()}
+                            save_json(notes_path, notes)
+                        st.success("Note saved.")
+                st.caption("Notes attach to this observation's date. Separate observed facts from interpretations.")
 
-# ----------------------------
-# Average Score by Ticker (Top 15)
-# ----------------------------
-st.subheader("Average Score by Ticker (Top 15)")
-if "pump_score" in fdf.columns and "ticker" in fdf.columns and not fdf.empty:
-    avg_by_ticker = (
-        fdf.groupby("ticker")["pump_score"]
-        .mean()
-        .reset_index(name="avg_score")
-        .sort_values("avg_score", ascending=False)
-        .head(15)
-    )
-    if not avg_by_ticker.empty:
-        chart_score = alt.Chart(avg_by_ticker).mark_bar().encode(
-            x=alt.X("avg_score:Q", title="Avg Pump Score"),
-            y=alt.Y("ticker:N", sort="-x", title="Ticker")
-        ).properties(height=320)
-        st.altair_chart(chart_score, use_container_width=True)
-    else:
-        st.caption("No scores to chart.")
-else:
-    st.caption("Need columns: ticker, pump_score.")
-
-# ----------------------------
-# Summary by ticker
-# ----------------------------
-st.subheader("Alert Summary by Ticker")
-if not fdf.empty and "ticker" in fdf.columns:
-    agg = {"ticker": ("ticker", "count")}
-    if "pump_score" in fdf.columns:
-        agg["avg_score"] = ("pump_score", "mean")
-    if "outcome" in fdf.columns:
-        agg["pumps"] = ("outcome", lambda s: is_pump_series(s).sum())
-
-    grp = fdf.groupby("ticker").agg(**agg).rename(columns={"ticker": "alerts"})
-    if "avg_score" in grp.columns:
-        grp["avg_score"] = grp["avg_score"].round(2)
-    if "pumps" in grp.columns:
-        grp["precision_%"] = (100.0 * grp["pumps"] / grp["alerts"]).round(2)
-
-    st.dataframe(grp.sort_values("alerts", ascending=False), use_container_width=True)
-else:
-    st.info("No rows after filters.")
-
-# ----------------------------
-# Recent Alerts (table + download)
-# ----------------------------
-st.subheader("Recent Alerts")
-candidate_cols = [
-    "alert_date", "date", "ticker", "tier", "pump_score",
-    "status", "outcome", "alert_price", "vol_z", "daily_return"
-]
-show_cols = [c for c in candidate_cols if c in fdf.columns]
-fdf_sorted = fdf.sort_values(DATE_COL, ascending=False) if DATE_COL else fdf.copy()
-table_recent = fdf_sorted[show_cols].head(300)
 
 try:
-    st.dataframe(style_outcome(table_recent), use_container_width=True)
-except Exception:
-    st.dataframe(table_recent, use_container_width=True)
-
-st.download_button(
-    label="Download filtered alerts (CSV)",
-    data=table_recent.to_csv(index=False).encode("utf-8"),
-    file_name="filtered_alerts.csv",
-    mime="text/csv",
-)
-
-# ----------------------------
-# Ticker Detail (robust)
-# ----------------------------
-# Sidebar selector (auto-picks first ticker so something shows)
-tickers = sorted(fdf["ticker"].dropna().unique()) if "ticker" in fdf.columns else []
-default_idx = 1 if tickers else 0  # 0="(none)", 1=first ticker
-sel_ticker = st.sidebar.selectbox("Ticker detail", options=["(none)"] + tickers, index=default_idx)
-
-st.subheader("Ticker Detail")
-if sel_ticker and sel_ticker != "(none)":
-    if "ticker" not in fdf.columns:
-        st.info("No ticker column available.")
-    else:
-        tdf = fdf[fdf["ticker"] == sel_ticker].copy()
-        DATE_COL_T = "alert_date" if "alert_date" in tdf.columns else ("date" if "date" in tdf.columns else None)
-
-        left, right = st.columns([2, 1])
-        with left:
-            view_cols = [c for c in ["alert_date","date","tier","pump_score","outcome","daily_return","alert_price","vol_z"] if c in tdf.columns]
-            table_ticker = (tdf.sort_values(DATE_COL_T, ascending=False)[view_cols] if DATE_COL_T else tdf[view_cols])
-            st.write(f"**{sel_ticker} — {len(tdf)} alerts**")
-            try:
-                st.dataframe(style_outcome(table_ticker), use_container_width=True)
-            except Exception:
-                st.dataframe(table_ticker, use_container_width=True)
-
-        with right:
-            if "outcome" in tdf.columns and len(tdf) > 0:
-                pumps_t = tdf["outcome"].astype(str).isin(["confirmed_pump","likely_pump"]).sum()
-                prec_t = 100.0 * pumps_t / len(tdf) if len(tdf) else 0.0
-                st.metric("Precision (this ticker)", f"{prec_t:.1f}%")
-            if "pump_score" in tdf.columns and len(tdf) > 0:
-                st.metric("Avg pump_score", f"{tdf['pump_score'].mean():.1f}")
-
-        # --- Choose a wide window so Yahoo is more likely to return data
-        if DATE_COL_T and not tdf[DATE_COL_T].isna().all():
-            dmin = pd.to_datetime(tdf[DATE_COL_T].min())
-            dmax = pd.to_datetime(tdf[DATE_COL_T].max())
-            start = (dmin - timedelta(days=90)).date()
-            end   = (dmax + timedelta(days=120)).date()
-        else:
-            end = pd.Timestamp.today().date()
-            start = (pd.Timestamp.today() - pd.Timedelta(days=240)).date()
-
-        # --- Load price with diagnostics
-        price = load_price(sel_ticker, start=start, end=end)
-
-        st.markdown("**Price chart (with alert markers)**")
-        # Diagnostic panel (collapsible) to help if chart doesn't appear
-        with st.expander("Debug (price fetch details)"):
-            st.write({"ticker": sel_ticker, "start": str(start), "end": str(end)})
-            if isinstance(price, pd.DataFrame) and "__error__" in price.columns:
-                st.error(f"yfinance error: {price['__error__'].iloc[0]}")
-            else:
-                st.write("price rows:", 0 if price is None else len(price))
-
-        # --- Plot logic
-        if price is None or (isinstance(price, pd.DataFrame) and price.empty) or ("close" not in price.columns):
-            # Fallback: show alert-day returns if available
-            alt_df = tdf.copy()
-            if DATE_COL_T and "daily_return" in alt_df.columns and not alt_df["daily_return"].isna().all():
-                st.caption("No Yahoo price data — showing alert-day returns instead.")
-                tmp = alt_df[[DATE_COL_T,"daily_return"]].dropna().rename(columns={DATE_COL_T:"date"})
-                tmp = tmp.sort_values("date")
-                st.line_chart(tmp.set_index("date")["daily_return"])
-            else:
-                st.info("No price data available.")
-        else:
-            # Ensure 'date' is datetime for Altair
-            price_reset = price.copy()
-            price_reset["date"] = pd.to_datetime(price_reset["date"])
-
-            line = (
-                alt.Chart(price_reset)
-                .mark_line()
-                .encode(
-                    x=alt.X("date:T", title="Date"),
-                    y=alt.Y("close:Q", title="Close")
-                )
-                .properties(height=260, width="container")
-            )
-            rule_df = pd.DataFrame({"date": []})
-            if DATE_COL_T:
-                rule_df = pd.DataFrame({
-                    "date": sorted(pd.to_datetime(tdf[DATE_COL_T].dropna()).dt.normalize().unique())
-                })
-            rules = alt.Chart(rule_df).mark_rule(color="red", opacity=0.5).encode(x="date:T")
-            st.altair_chart(line + rules, use_container_width=True)
-
-            if DATE_COL_T and not rule_df.empty:
-                alert_dates = sorted(pd.to_datetime(tdf[DATE_COL_T].dropna()).dt.date.unique())
-                st.caption("Alert dates: " + ", ".join(str(d) for d in alert_dates[:20]) + (" …" if len(alert_dates) > 20 else ""))
-
-# ----------------------------
-# Performance Visuals: Precision by Tier + Weekly Precision
-# ----------------------------
-st.subheader("Performance Visuals")
-
-# Precision by tier (bar)
-if "tier" in fdf.columns and "outcome" in fdf.columns and not fdf.empty:
-    by_tier = (
-        fdf.groupby("tier")["outcome"]
-        .apply(lambda s: (is_pump_series(s).mean()) * 100.0)
-        .reset_index(name="precision_pct")
-        .sort_values("precision_pct", ascending=False)
-    )
-    if not by_tier.empty:
-        chart_tier = alt.Chart(by_tier).mark_bar().encode(
-            x=alt.X("tier:N", title="Tier"),
-            y=alt.Y("precision_pct:Q", title="Precision (%)")
-        ).properties(height=300)
-        st.altair_chart(chart_tier, use_container_width=True)
-
-# Weekly precision over time (line)
-if DATE_COL and "outcome" in fdf.columns:
-    tmp = fdf[[DATE_COL, "outcome"]].dropna().copy()
-    if not tmp.empty:
-        tmp["week"] = tmp[DATE_COL].dt.to_period("W").dt.start_time
-        weekly = (
-            tmp.groupby("week")["outcome"]
-            .apply(lambda s: (is_pump_series(s).mean()) * 100.0)
-            .reset_index(name="precision_pct")
-            .sort_values("week")
-        )
-        if not weekly.empty:
-            chart_week = alt.Chart(weekly).mark_line().encode(
-                x=alt.X("week:T", title="Week"),
-                y=alt.Y("precision_pct:Q", title="Precision (%)")
-            ).properties(height=300)
-            st.altair_chart(chart_week, use_container_width=True)
+    main()
+except (ValueError, OSError, KeyError) as exc:
+    st.error(f"Could not load this research workspace: {exc}")
