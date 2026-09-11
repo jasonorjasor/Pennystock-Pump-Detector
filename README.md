@@ -1,12 +1,8 @@
 # Microcap Observatory
 
-A daily research workspace for unusual market activity, inspectable scores, and fixed-session price outcomes. See [the v2 release guide](docs/V2_RELEASE.md) for implemented features and limitations.
-
-The [social evidence foundation](docs/SOCIAL_EVIDENCE.md) adds a versioned research universe, local JSON imports, coverage-aware attention scores, and a Social evidence dashboard tab. Run `python observatory.py social-demo` for an entirely fictional example. Live social collection and predictive accuracy are not implemented or established.
+A local research application for finding unusual activity in low-priced U.S. equities, reviewing candidates, and measuring fixed-session outcomes. Market and social evidence remain separate and inspectable. Scores describe unusual observations; they are not fraud probabilities or trading recommendations.
 
 ## Start here
-
-The [research workflow](docs/RESEARCH_WORKFLOW.md) adds dashboard import previews, readiness checks, and an attention review queue. Run `python observatory.py research-readiness` to report missing prerequisites without changing data.
 
 On Windows, from the project directory:
 
@@ -60,9 +56,9 @@ Discover and review new candidates separately:
 .\.venv\Scripts\python.exe observatory.py candidates revalidate
 ```
 
-Discovery reads official Nasdaq Trader symbol directories, applies security-type exclusions, computes `discovery-v1` features, and nominates no more than ten symbols. Human approval is required before a symbol enters routine scans. Approval means “include this security in future research scans”; it is not an investment recommendation or manipulation label. A session's universe remains frozen, so approvals made afterward begin with the next uncaptured completed session.
+Discovery reads official Nasdaq Trader symbol directories, applies security-type exclusions, computes `discovery-v1` features, and nominates no more than ten symbols. Human approval is required before a symbol enters routine scans. Approval means “include this security in future research scans.” A session's universe remains frozen, so approvals made afterward begin with the next uncaptured completed session.
 
-Repeated discovery for the same session returns its saved result instead of redownloading the entire market. Use `--force` only when an intentional same-session retry is necessary. Provider failures remain incomplete coverage and are not scored as normal activity. See [candidate discovery](docs/CANDIDATE_DISCOVERY.md).
+Repeated discovery for the same session returns its saved result instead of redownloading the entire market. Use `--force` only when an intentional same-session retry is necessary. Provider failures remain incomplete coverage and are not scored as normal activity.
 
 Replay or choose inputs explicitly:
 
@@ -76,7 +72,7 @@ Live commands download data from Yahoo through yfinance. An old historical run s
 
 The existing `source/MAIN/` scripts remain compatibility entrypoints. Historical analysis now writes a new v2 run with `MASTER_OUTCOMES.csv`, `ACTIVITY_EPISODES.csv`, and descriptive intervals. Old pump-named CSVs, PNG reports, and automatic cycle-prediction claims are not regenerated.
 
-## What changed
+## How it works
 
 - One shared score with prior-session baselines and a strict `score > 50` threshold; maximum 130 points.
 - Exactly ten exchange sessions for final outcomes; missing bars are never silently filled or compressed.
@@ -86,11 +82,9 @@ The existing `source/MAIN/` scripts remain compatibility entrypoints. Historical
 - A research queue, ticker event timeline, and editable notes with evidence URLs.
 - Review-first candidate discovery, durable state transitions, approved-universe snapshots, and quiet comparisons.
 - Coverage-aware imported social evidence and separate combined-evidence classifications.
-- Separate legacy display and optional reconstruction workflow. The old 49.6% metric is not the v2 success rate.
+- Separate legacy display and optional reconstruction workflow.
 
-For commands, file formats, definitions, and limitations, read [the v2 release guide](docs/V2_RELEASE.md).
-
-See [the documentation index](docs/README.md) for the release guide and audit tooling.
+See [Methodology](docs/METHODOLOGY.md) for scoring, candidate selection, outcomes, and limitations. See [Data formats](docs/DATA_FORMATS.md) for workspace files and the social import contract.
 
 ## Verification
 
