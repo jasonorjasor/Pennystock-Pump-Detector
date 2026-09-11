@@ -45,6 +45,9 @@ def fetch_bars(ticker, start, end, prices_dir=None):
         raw = pd.read_csv(path)
     else:
         import yfinance as yf
+        cache = ROOT / "runs" / ".yfinance_cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        yf.set_tz_cache_location(str(cache))
         raw = yf.download(ticker, start=str(pd.Timestamp(start).date()),
                           end=str(pd.Timestamp(end).date()), auto_adjust=True,
                           actions=True, progress=False, timeout=20, threads=False)
@@ -60,7 +63,7 @@ def record_bars(path, bars):
 
 
 def scan(workspace, session=None, historical_run=None, watchlist=None,
-         mode="union_selected", prices_dir=None):
+         mode="approved", prices_dir=None):
     workspace = Path(workspace).resolve()
     provider = "offline" if prices_dir else "yfinance"
     if prices_dir and workspace == DEFAULT_WORKSPACE.resolve():
@@ -68,12 +71,23 @@ def scan(workspace, session=None, historical_run=None, watchlist=None,
     day = completed_session(session)
     daystr = str(day.date())
     watch = load_watchlist(watchlist or ROOT / "source/MAIN/watchlist.txt")
-    history = None if mode == "override" else latest_historical_run(historical_run)
+    history = None if mode in {"override", "approved"} else latest_historical_run(historical_run)
     tiers = {"tier1": [], "tier2": [], "tier3": []}
     if history:
         intervals = pd.read_csv(history / "data/analysis/ticker_intervals.csv")
         tiers = assign_tiers(intervals)
-    universe = resolve_universe(tiers, watch, day, mode)
+    if mode == "approved":
+        from .discovery import initialize_registry, read_registry, approved_tickers, capture_universe
+        state = read_registry(workspace)
+        if not state["candidates"]:
+            initialize_registry(workspace, watchlist or ROOT / "source/MAIN/watchlist.txt")
+            state = read_registry(workspace)
+        prior = next((r for r in state["universe_snapshots"] if r["session"] == daystr), None)
+        snapshot = prior or capture_universe(workspace, day)
+        universe = [{"ticker": ticker, "tier": "approved", "watchlist": ticker in watch}
+                    for ticker in snapshot["tickers"]]
+    else:
+        universe = resolve_universe(tiers, watch, day, mode)
     if not universe:
         raise ValueError("Universe is empty; provide a populated watchlist or historical tiers")
     for item in universe:
@@ -97,7 +111,8 @@ def scan(workspace, session=None, historical_run=None, watchlist=None,
                     "provider": "offline" if prices_dir else "yfinance",
                     "price_basis": "supplied_file" if prices_dir else "auto_adjust=True",
                     "historical_run": str(history) if history else None,
-                    "universe": universe, "watchlist_mode": mode}
+                    "universe": universe, "watchlist_mode": mode,
+                    "universe_snapshot_session": daystr if mode == "approved" else None}
         save_json(folder / "manifest.json", manifest)
         rows = []
         start = day - pd.Timedelta(days=100)

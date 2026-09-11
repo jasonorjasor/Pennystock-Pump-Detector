@@ -93,7 +93,7 @@ def main():
             if tracking["state"] == "partial":
                 st.warning("Some outcomes could not be refreshed; prior valid values were retained.")
 
-    briefing, performance, detail = st.tabs(["Research queue", "Evaluation", "Ticker notebook"])
+    briefing, performance, detail, candidates, social = st.tabs(["Research queue", "Evaluation", "Ticker notebook", "New candidates", "Social evidence"])
     with briefing:
         if alerts.empty:
             st.info("No alerts recorded. A healthy scan can finish with zero alerts.")
@@ -185,6 +185,50 @@ def main():
                             save_json(notes_path, notes)
                         st.success("Note saved.")
                 st.caption("Notes attach to this observation's date. Separate observed facts from interpretations.")
+
+
+    with candidates:
+        if legacy:
+            st.info("Select an Observatory workspace to review candidates.")
+        else:
+            from pennystock.discovery import change_candidate, list_candidates
+            rows = list_candidates(workspace)
+            pending = [r for r in rows if r["state"] == "needs_review"]
+            if not pending:
+                st.info("No candidates need review. Run: python observatory.py discover")
+            else:
+                ticker = st.selectbox("Candidate", [r["ticker"] for r in pending])
+                candidate = next(r for r in pending if r["ticker"] == ticker)
+                observation = candidate.get("latest_observation") or {}
+                st.write({"state": candidate["state"], "quiet_comparison": candidate["quiet_comparison"],
+                          "score_version": observation.get("score_version"), "discovery_score": observation.get("discovery_score"),
+                          "coverage_status": observation.get("coverage_status"), "latest_price": observation.get("latest_price"),
+                          "volume_ratio": observation.get("volume_ratio"), "volume_z": observation.get("volume_z"),
+                          "return_1d": observation.get("return_1d"), "listing_deficiency": observation.get("listing_deficiency")})
+                st.caption("Discovery ranks research candidates. It is separate from market alerts and social evidence.")
+                reason = st.text_input("Candidate review reason", key="candidate_reason")
+                left, right = st.columns(2)
+                if left.button("Approve candidate"):
+                    try:
+                        change_candidate(workspace, ticker, "approved", reason)
+                        st.success(f"{ticker} approved for the next uncaptured session.")
+                        st.rerun()
+                    except (ValueError, RuntimeError) as exc:
+                        st.error(str(exc))
+                if right.button("Reject candidate"):
+                    try:
+                        change_candidate(workspace, ticker, "rejected", reason)
+                        st.success(f"{ticker} rejected; its history was retained.")
+                        st.rerun()
+                    except (ValueError, RuntimeError) as exc:
+                        st.error(str(exc))
+
+    with social:
+        if legacy:
+            st.info("Select an Observatory workspace to inspect social evidence.")
+        else:
+            from pennystock.social_ui import render
+            render(workspace)
 
 
 try:

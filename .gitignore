@@ -51,7 +51,10 @@ backups/
 .writer.lock
 .writing-*
 **/notes.json
+**/social.json
 **/watchlist.txt
+**/candidates.json
+**/approved_watchlist.txt
 docs/review/audit_evidence.json
 
 # Credentials and machine-specific configuration

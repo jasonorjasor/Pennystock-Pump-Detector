@@ -91,3 +91,7 @@ The demo uses existing saved bars and was checked in the dashboard. The real leg
 The engine currently uses the NYSE calendar as the common U.S. equity calendar; venue-specific differences require another adapter. It does not implement point-in-time issuer identities, automated split investigation, matched baselines, event recall, calibrated probabilities, or a trading simulation. An old tier file remains old even when scanning current prices: refresh historical inputs deliberately and use explicit run selection for reproducibility.
 
 Original audit findings and their evidence are retained. The audit script now extracts the pre-release functions from pinned Git commit `6d21d5171292d1615a33e0dbf9cdf1c21e1fc1f3` so its bug reproductions do not accidentally target the repaired wrappers. It requires that commit in the local Git history; use the new tests to verify current behavior.
+
+## Social evidence addition
+
+The optional [social evidence foundation](SOCIAL_EVIDENCE.md) now provides versioned research candidates, local evidence imports, coverage-aware experimental attention scores, and a Streamlit chronology. It uses separate social state and does not change the market score or outcome rules. See its guide for current commands and explicit limitations; there is no live social collector yet.
