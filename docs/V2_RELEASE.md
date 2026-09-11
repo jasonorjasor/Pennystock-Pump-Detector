@@ -18,7 +18,7 @@ Run from the repository root using the project virtual environment. Script entry
 
 Use `--help` after any subcommand. The old scanner, tracker, detector, analyzer, and diagnostic filenames delegate to scan, track, backtest, analyze, and report respectively. Importing them does not run a pipeline.
 
-`scan --watchlist-mode union_selected` is the default: Tier 1 and watchlist every session, plus Tier 2 on Monday/Wednesday/Friday. `union_tier1` explicitly excludes scheduled Tier 2; `override` uses only the watchlist. Each ticker appears once. Blank lines and `#` comments are allowed in a watchlist.
+`scan` and `daily` now default to the approved candidate registry. The first run seeds that registry from the local reviewed watchlist, and every session captures an immutable universe snapshot. `union_selected` and `union_tier1` remain available for explicit legacy-tier research; `override` uses only the supplied watchlist. Each ticker appears once. Blank lines and `#` comments are allowed in a watchlist.
 
 Exit code 0 means completion; 1 means a partial scan/update; 2 means invalid configuration. A run with zero alerts can be completely healthy. With the original local archive, the demo exposes one invalid ticker and reports partial coverage. Without that archive, it generates fictional OHLCV and completes normally. Neither demo supports a predictive-performance claim.
 

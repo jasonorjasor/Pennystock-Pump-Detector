@@ -38,6 +38,17 @@ Copy-Item source/MAIN/watchlist.example.txt source/MAIN/watchlist.txt
 
 `daily` uses the approved candidate registry, freezes the session's exact universe, scans it, updates fixed-session outcomes, refreshes readiness, and writes a briefing. It returns status 1 when market coverage is partial. The scanner defaults to the latest completed NYSE session plus a 30-minute completion buffer. Exchange holidays and early closes are respected.
 
+Recommended schedule:
+
+| When | Command | Purpose |
+|---|---|---|
+| Every trading day, 30–60 minutes after the close | `observatory.py daily` | Scan approved tickers and update outcomes |
+| Once or twice per week after `daily` | `observatory.py discover` | Find a new review batch |
+| After discovery | Streamlit dashboard | Review candidates and record decisions |
+| Weekly | `observatory.py candidates revalidate` | Flag listing, identity, data, and corporate-action issues |
+
+Run the workflow consistently for at least 12 weeks before drawing conclusions about alert quality. A session with no alerts is a valid result.
+
 Discover and review new candidates separately:
 
 ```powershell
@@ -45,9 +56,13 @@ Discover and review new candidates separately:
 .\.venv\Scripts\python.exe observatory.py candidates list --state needs_review
 .\.venv\Scripts\python.exe observatory.py candidates approve TICKER --reason "Identity and chart reviewed"
 .\.venv\Scripts\python.exe observatory.py candidates reject TICKER --reason "Reason for rejection"
+.\.venv\Scripts\python.exe observatory.py candidates hold TICKER --reason "Corporate action requires review"
+.\.venv\Scripts\python.exe observatory.py candidates revalidate
 ```
 
-Discovery reads official Nasdaq Trader symbol directories, applies security-type exclusions, computes `discovery-v1` features, and nominates no more than ten symbols. Human approval is required before a symbol enters routine scans. See [candidate discovery](docs/CANDIDATE_DISCOVERY.md).
+Discovery reads official Nasdaq Trader symbol directories, applies security-type exclusions, computes `discovery-v1` features, and nominates no more than ten symbols. Human approval is required before a symbol enters routine scans. Approval means “include this security in future research scans”; it is not an investment recommendation or manipulation label. A session's universe remains frozen, so approvals made afterward begin with the next uncaptured completed session.
+
+Repeated discovery for the same session returns its saved result instead of redownloading the entire market. Use `--force` only when an intentional same-session retry is necessary. Provider failures remain incomplete coverage and are not scored as normal activity. See [candidate discovery](docs/CANDIDATE_DISCOVERY.md).
 
 Replay or choose inputs explicitly:
 
@@ -69,6 +84,8 @@ The existing `source/MAIN/` scripts remain compatibility entrypoints. Historical
 - Immutable successful observations and finalized outcomes, atomic files, and a shared writer lock.
 - Full scan-status records, archived input bars, per-rule explanations, and consistent dashboard denominators.
 - A research queue, ticker event timeline, and editable notes with evidence URLs.
+- Review-first candidate discovery, durable state transitions, approved-universe snapshots, and quiet comparisons.
+- Coverage-aware imported social evidence and separate combined-evidence classifications.
 - Separate legacy display and optional reconstruction workflow. The old 49.6% metric is not the v2 success rate.
 
 For commands, file formats, definitions, and limitations, read [the v2 release guide](docs/V2_RELEASE.md).
@@ -81,7 +98,8 @@ See [the documentation index](docs/README.md) for the release guide and audit to
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Tests use fixed local data, including Streamlit interaction checks. Local validation used Python 3.14.3. CI is configured for Python 3.12 and 3.14; those hosted jobs have not yet run. `requirements-tested.txt` pins the tested direct dependencies; it is not a full transitive lockfile.
+The current suite contains 72 fixed-data tests, including Streamlit interaction, discovery ranking, review gates, universe snapshots, social coverage, and repeatable daily runs. Local validation used Python 3.14.3. CI is configured for Python 3.12 and 3.14. `requirements-tested.txt` pins the tested direct dependencies; it is not a full transitive lockfile.
+
 ## Legacy code
 
 The scripts under `source/MAIN/` and old run artifacts are retained for historical review. They are not the current workflow. Use `observatory.py` commands documented above.
