@@ -60,7 +60,8 @@ class DiscoveryTests(unittest.TestCase):
     def test_discover_is_deterministic_and_requires_review(self):
         first = discover(self.workspace, self.session, symbols_dir=self.symbols, prices_dir=self.prices)
         second = discover(self.workspace, self.session, symbols_dir=self.symbols, prices_dir=self.prices)
-        self.assertEqual(first["top_candidates"], second["top_candidates"])
+        self.assertEqual(first["nominated_candidates"], second["nominated_candidates"])
+        self.assertTrue(second["cached"])
         state = read_registry(self.workspace)
         self.assertEqual(next(r for r in state["candidates"] if r["ticker"] == "AAA")["state"], "needs_review")
         self.assertFalse((self.workspace / "approved_watchlist.txt").read_text())

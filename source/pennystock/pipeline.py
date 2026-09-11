@@ -48,10 +48,11 @@ def fetch_bars(ticker, start, end, prices_dir=None):
         cache = ROOT / "runs" / ".yfinance_cache"
         cache.mkdir(parents=True, exist_ok=True)
         yf.set_tz_cache_location(str(cache))
-        raw = yf.download(ticker, start=str(pd.Timestamp(start).date()),
+        provider_ticker = ticker.replace(".", "-")
+        raw = yf.download(provider_ticker, start=str(pd.Timestamp(start).date()),
                           end=str(pd.Timestamp(end).date()), auto_adjust=True,
                           actions=True, progress=False, timeout=20, threads=False)
-    bars = normalize_bars(raw, ticker)
+    bars = normalize_bars(raw, provider_ticker if not prices_dir else ticker)
     return bars[(bars.index >= pd.Timestamp(start)) & (bars.index < pd.Timestamp(end))]
 
 

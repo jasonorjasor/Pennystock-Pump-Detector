@@ -112,6 +112,7 @@ def main(argv=None):
     di.add_argument("--symbols-dir", type=Path, help="Offline nasdaq.txt and other.txt directory")
     di.add_argument("--prices-dir", type=Path)
     di.add_argument("--max-new", type=int, default=10)
+    di.add_argument("--force", action="store_true", help="Repeat discovery for an already recorded session")
     c = sub.add_parser("candidates", help="List or change candidate review state")
     cs = c.add_subparsers(dest="candidate_command", required=True)
     cl = cs.add_parser("list")

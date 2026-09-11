@@ -197,15 +197,17 @@ def _live_batches(identities, start, end, chunk_size=100):
     cache.mkdir(parents=True, exist_ok=True)
     yf.set_tz_cache_location(str(cache))
     result, errors = {}, {}
-    symbols = [r["symbol"] for r in identities]
+    symbol_map = {r["symbol"]: r["symbol"].replace(".", "-") for r in identities}
+    symbols = list(symbol_map)
     for offset in range(0, len(symbols), chunk_size):
         chunk = symbols[offset:offset + chunk_size]
+        provider_chunk = [symbol_map[t] for t in chunk]
         try:
-            raw = yf.download(chunk, start=str(start.date()), end=str(end.date()), auto_adjust=True,
+            raw = yf.download(provider_chunk, start=str(start.date()), end=str(end.date()), auto_adjust=True,
                               actions=True, progress=False, timeout=30, threads=True, group_by="column")
             for ticker in chunk:
                 try:
-                    result[ticker] = normalize_bars(raw, ticker)
+                    result[ticker] = normalize_bars(raw, symbol_map[ticker])
                 except Exception as exc:
                     errors[ticker] = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
@@ -215,10 +217,16 @@ def _live_batches(identities, start, end, chunk_size=100):
 
 
 def discover(workspace=DEFAULT_WORKSPACE, session=None, max_price=5.0, symbols_dir=None,
-             prices_dir=None, max_new=10):
+             prices_dir=None, max_new=10, force=False):
     day = completed_session(session)
-    identities = fetch_directories(symbols_dir)
     run_id = f"{day.date()}_{DISCOVERY_VERSION}"
+    prior_state = read_registry(workspace)
+    prior_run = next((r for r in prior_state["discovery_runs"] if r["id"] == run_id), None)
+    if prior_run and not force:
+        nominated = [r["ticker"] for r in prior_state["transitions"]
+                     if r.get("source_snapshot") == run_id and r["new_state"] == "needs_review"]
+        return prior_run | {"nominated_candidates": nominated, "cached": True}
+    identities = fetch_directories(symbols_dir)
     observations, evaluated = [], []
     start, end = day - pd.Timedelta(days=120), day + pd.Timedelta(days=1)
     live_bars, live_errors = ({}, {}) if prices_dir else _live_batches(identities, start, end)
@@ -256,6 +264,7 @@ def discover(workspace=DEFAULT_WORKSPACE, session=None, max_price=5.0, symbols_d
                     _transition(state, candidate["ticker"], "expired", "Unreviewed for 10 completed sessions", "system")
         existing = {r["ticker"]: r for r in state["candidates"]}
         nominated = 0
+        nominated_symbols = []
         unseen = [r for r in observations if r["ticker"] not in existing]
         quiet_count = min(len(unseen) // 5, max(1, round(max_new * .2))) if unseen else 0
         signal_count = max_new - quiet_count
@@ -268,6 +277,7 @@ def discover(workspace=DEFAULT_WORKSPACE, session=None, max_price=5.0, symbols_d
                 _transition(state, row["ticker"], "needs_review", "Ranked by discovery-v1", "system",
                             snapshot=run_id, quiet=row["ticker"] in quiet_symbols)
                 nominated += 1
+                nominated_symbols.append(row["ticker"])
         keys = {(r["ticker"], r["as_of"], r["score_version"]) for r in state["observations"]}
         state["observations"].extend(r for r in evaluated if (r["ticker"], r["as_of"], r["score_version"]) not in keys)
         run = {"id": run_id, "session": str(day.date()), "retrieved_at": utcnow(), "score_version": DISCOVERY_VERSION,
@@ -279,7 +289,8 @@ def discover(workspace=DEFAULT_WORKSPACE, session=None, max_price=5.0, symbols_d
             state["discovery_runs"].append(run)
         save_json(Path(workspace) / "candidates.json", state)
         _write_approved(workspace, state)
-    return run | {"top_candidates": [r["ticker"] for r in observations[:max_new]]}
+    return run | {"nominated_candidates": nominated_symbols,
+                  "ranked_top": [r["ticker"] for r in observations[:max_new]], "cached": False}
 
 
 def capture_universe(workspace, session):
