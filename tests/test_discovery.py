@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source"))
 from pennystock.cli import daily
 from pennystock.discovery import (ACTIVE_LIMIT, change_candidate, discovery_features,
     discover, initialize_registry, parse_directory, read_registry)
+from pennystock.study import record_baselines, study_report, track_baselines
 from pennystock.pipeline import scan
 
 
@@ -45,6 +46,12 @@ class DiscoveryTests(unittest.TestCase):
         self.watch = self.root / "watchlist.txt"
         self.watch.write_text("AAA\n")
 
+    @staticmethod
+    def review():
+        return {"identity_checked": True, "liquidity_checked": True,
+                "catalyst_category": "none_found", "corporate_action": "none_found",
+                "data_quality": "complete", "evidence_url": "https://www.sec.gov/edgar/search/"}
+
     def test_directory_excludes_non_equity_products(self):
         rows = parse_directory(NASDAQ, "fixture") + parse_directory(OTHER, "fixture")
         self.assertEqual({r["symbol"] for r in rows}, {"AAA", "BBB"})
@@ -65,7 +72,7 @@ class DiscoveryTests(unittest.TestCase):
         state = read_registry(self.workspace)
         self.assertEqual(next(r for r in state["candidates"] if r["ticker"] == "AAA")["state"], "needs_review")
         self.assertFalse((self.workspace / "approved_watchlist.txt").read_text())
-        change_candidate(self.workspace, "AAA", "approved", "Reviewed identity and chart")
+        change_candidate(self.workspace, "AAA", "approved", "Reviewed identity and price chart", review=self.review())
         self.assertEqual((self.workspace / "approved_watchlist.txt").read_text(), "AAA\n")
 
     def test_session_snapshot_is_stable(self):
@@ -77,7 +84,7 @@ class DiscoveryTests(unittest.TestCase):
             "reason": "x", "reviewer": "x", "first_seen_at": "x", "quiet_comparison": False})
         from pennystock.storage import save_json
         save_json(self.workspace / "candidates.json", state)
-        change_candidate(self.workspace, "BBB", "approved", "Reviewed")
+        change_candidate(self.workspace, "BBB", "approved", "Reviewed identity, liquidity, and chart", review=self.review())
         with contextlib.redirect_stdout(io.StringIO()):
             result = scan(self.workspace, self.session, watchlist=self.watch, prices_dir=self.prices)
         self.assertEqual([r["ticker"] for r in result["universe"]], ["AAA"])
@@ -92,7 +99,7 @@ class DiscoveryTests(unittest.TestCase):
         from pennystock.storage import save_json
         save_json(self.workspace / "candidates.json", state)
         with self.assertRaisesRegex(ValueError, "capacity"):
-            change_candidate(self.workspace, "OVER", "approved", "reviewed")
+            change_candidate(self.workspace, "OVER", "approved", "reviewed", review=self.review())
         self.assertEqual(read_registry(self.workspace)["candidates"][-1]["state"], "needs_review")
 
     def test_daily_is_idempotent(self):
@@ -101,6 +108,17 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(daily(self.workspace, self.session, self.prices, self.watch)["state"], "complete")
         observations = pd.read_csv(self.workspace / "observations.csv")
         self.assertEqual(len(observations), 1)
+        baselines = pd.read_csv(self.workspace / "baseline_outcomes.csv")
+        self.assertEqual(len(baselines), 2)
+        self.assertEqual(study_report(self.workspace, self.session)["completed_sessions"], 1)
+
+    def test_structured_review_is_required_and_preserved(self):
+        discover(self.workspace, self.session, symbols_dir=self.symbols, prices_dir=self.prices)
+        with self.assertRaisesRegex(ValueError, "Structured review"):
+            change_candidate(self.workspace, "AAA", "approved", "Too vague")
+        change_candidate(self.workspace, "AAA", "approved", "Identity and liquidity verified", review=self.review())
+        transition = read_registry(self.workspace)["transitions"][-1]
+        self.assertEqual(transition["review"]["data_quality"], "complete")
 
     def test_dashboard_candidate_approval(self):
         from streamlit.testing.v1 import AppTest
@@ -111,7 +129,12 @@ class DiscoveryTests(unittest.TestCase):
         with patch.object(storage, "ROOT", self.root), patch.object(storage, "DEFAULT_WORKSPACE", self.workspace):
             app = AppTest.from_file(str(dashboard)).run(timeout=20)
             self.assertFalse(app.exception)
-            next(x for x in app.text_input if x.label == "Candidate review reason").set_value("Reviewed fixture")
+            next(x for x in app.text_input if x.label == "Candidate review reason").set_value("Reviewed fixture identity and chart")
+            next(x for x in app.checkbox if x.label == "Identity and listing checked").check()
+            next(x for x in app.checkbox if x.label == "Liquidity and chart checked").check()
+            next(x for x in app.selectbox if x.label == "Recent catalyst").select("none_found")
+            next(x for x in app.selectbox if x.label == "Corporate action").select("none_found")
+            next(x for x in app.selectbox if x.label == "Data quality").select("complete")
             next(x for x in app.button if x.label == "Approve candidate").click().run(timeout=20)
             self.assertFalse(app.exception)
             self.assertIn("AAA", (self.workspace / "approved_watchlist.txt").read_text())

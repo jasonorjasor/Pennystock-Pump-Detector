@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import re
+import time
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -21,6 +22,9 @@ DIRECTORIES = {
 }
 STATES = {"discovered", "needs_review", "approved", "rejected", "expired", "held", "archived"}
 ACTIVE_LIMIT = 50
+CATALYST_CATEGORIES = {"none_found", "company_news", "sec_filing", "analyst_or_media", "unknown"}
+CORPORATE_ACTION_STATUSES = {"none_found", "split", "offering", "symbol_change", "other", "unknown"}
+DATA_QUALITY_STATUSES = {"complete", "partial", "failed", "unknown"}
 
 
 def utcnow():
@@ -44,7 +48,7 @@ def read_registry(workspace=DEFAULT_WORKSPACE):
     return state
 
 
-def _transition(state, ticker, new_state, reason, reviewer, stamp=None, snapshot=None, quiet=False):
+def _transition(state, ticker, new_state, reason, reviewer, stamp=None, snapshot=None, quiet=False, review=None):
     if new_state not in STATES:
         raise ValueError(f"Invalid candidate state: {new_state}")
     validate_ticker(ticker)
@@ -61,10 +65,12 @@ def _transition(state, ticker, new_state, reason, reviewer, stamp=None, snapshot
            "quiet_comparison": quiet if new_state == "needs_review" else previous.get("quiet_comparison", False) if previous else False}
     if not row["reason"] or not row["reviewer"]:
         raise ValueError("Reason and reviewer are required")
+    if review and len(row["reason"]) < 20:
+        raise ValueError("Structured review reason must be at least 20 characters and explain the decision")
     state["candidates"] = [r for r in state["candidates"] if r["ticker"] != ticker] + [row]
     state["transitions"].append({"ticker": ticker, "prior_state": old_state,
         "new_state": new_state, "timestamp": stamp, "reason": row["reason"],
-        "reviewer": row["reviewer"], "source_snapshot": snapshot})
+        "reviewer": row["reviewer"], "source_snapshot": snapshot, "review": review})
     return row
 
 
@@ -91,13 +97,34 @@ def _write_approved(workspace, state):
     return tickers
 
 
-def change_candidate(workspace, ticker, new_state, reason, reviewer="project-owner"):
+def validate_review(review):
+    """Validate a structured human review without interpreting it as proof of misconduct."""
+    required = {"identity_checked", "liquidity_checked", "catalyst_category",
+                "corporate_action", "data_quality"}
+    if not review or not required.issubset(review):
+        raise ValueError("Structured review is required: identity, liquidity, catalyst, corporate action, and data quality")
+    if review["identity_checked"] is not True or review["liquidity_checked"] is not True:
+        raise ValueError("Identity and liquidity must be checked before a decision")
+    if review["catalyst_category"] not in CATALYST_CATEGORIES:
+        raise ValueError("Invalid catalyst category")
+    if review["corporate_action"] not in CORPORATE_ACTION_STATUSES:
+        raise ValueError("Invalid corporate-action status")
+    if review["data_quality"] not in DATA_QUALITY_STATUSES:
+        raise ValueError("Invalid data-quality status")
+    url = (review.get("evidence_url") or "").strip()
+    if url and not url.startswith(("https://", "http://")):
+        raise ValueError("Evidence URL must use http or https")
+    return {**review, "evidence_url": url}
+
+
+def change_candidate(workspace, ticker, new_state, reason, reviewer="project-owner", review=None):
     ticker = ticker.upper()
     with writer_lock(workspace):
         state = read_registry(workspace)
         if not any(r["ticker"] == ticker for r in state["candidates"]):
             raise ValueError("Unknown candidate; run discover first")
-        row = _transition(state, ticker, new_state, reason, reviewer)
+        review = validate_review(review) if new_state in {"approved", "rejected"} else review
+        row = _transition(state, ticker, new_state, reason, reviewer, review=review)
         save_json(Path(workspace) / "candidates.json", state)
         _write_approved(workspace, state)
     return row
@@ -112,7 +139,12 @@ def list_candidates(workspace=DEFAULT_WORKSPACE, state_filter=None):
     for row in state["observations"]:
         if row["ticker"] not in latest or row["as_of"] > latest[row["ticker"]]["as_of"]:
             latest[row["ticker"]] = row
-    return [r | {"latest_observation": latest.get(r["ticker"])} for r in sorted(rows, key=lambda x: x["ticker"])]
+    reviews = {}
+    for transition in state["transitions"]:
+        if transition.get("review"):
+            reviews[transition["ticker"]] = transition["review"] | {"reviewed_at": transition["timestamp"]}
+    return [r | {"latest_observation": latest.get(r["ticker"]), "latest_review": reviews.get(r["ticker"])}
+            for r in sorted(rows, key=lambda x: x["ticker"])]
 
 
 def parse_directory(text, source, retrieved_at=None):
@@ -190,7 +222,7 @@ def discovery_features(bars, day):
     return features
 
 
-def _live_batches(identities, start, end, chunk_size=100):
+def _live_batches(identities, start, end, chunk_size=50):
     """Download in bounded batches; a failed batch remains failed instead of becoming zero activity."""
     import yfinance as yf
     cache = ROOT / "runs" / ".yfinance_cache"
@@ -203,8 +235,21 @@ def _live_batches(identities, start, end, chunk_size=100):
         chunk = symbols[offset:offset + chunk_size]
         provider_chunk = [symbol_map[t] for t in chunk]
         try:
-            raw = yf.download(provider_chunk, start=str(start.date()), end=str(end.date()), auto_adjust=True,
-                              actions=True, progress=False, timeout=30, threads=True, group_by="column")
+            raw = None
+            last_error = None
+            for attempt in range(3):
+                try:
+                    raw = yf.download(provider_chunk, start=str(start.date()), end=str(end.date()), auto_adjust=True,
+                                      actions=True, progress=False, timeout=45, threads=False, group_by="column")
+                    if raw is not None and not raw.empty:
+                        break
+                    last_error = ValueError("provider returned no price rows")
+                except Exception as exc:
+                    last_error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+            if raw is None or raw.empty:
+                raise RuntimeError(f"batch unavailable after 3 attempts: {last_error}")
             for ticker in chunk:
                 try:
                     result[ticker] = normalize_bars(raw, symbol_map[ticker])

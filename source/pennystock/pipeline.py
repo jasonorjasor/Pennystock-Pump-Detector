@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import uuid
+import time
 import pandas as pd
 from . import SCORE_VERSION, OUTCOME_VERSION, THRESHOLD
 from .calendar import completed_session, outcome_sessions, sessions_between
@@ -49,9 +50,30 @@ def fetch_bars(ticker, start, end, prices_dir=None):
         cache.mkdir(parents=True, exist_ok=True)
         yf.set_tz_cache_location(str(cache))
         provider_ticker = ticker.replace(".", "-")
-        raw = yf.download(provider_ticker, start=str(pd.Timestamp(start).date()),
-                          end=str(pd.Timestamp(end).date()), auto_adjust=True,
-                          actions=True, progress=False, timeout=20, threads=False)
+        start_date, end_date = str(pd.Timestamp(start).date()), str(pd.Timestamp(end).date())
+        data_cache = ROOT / "runs" / ".market_cache"
+        cache_name = f"{provider_ticker.replace('^', 'INDEX-')}__{start_date}__{end_date}.csv"
+        cache_path = data_cache / cache_name
+        if cache_path.exists():
+            raw = pd.read_csv(cache_path)
+        else:
+            error = None
+            for attempt in range(3):
+                try:
+                    raw = yf.download(provider_ticker, start=start_date, end=end_date, auto_adjust=True,
+                                      actions=True, progress=False, timeout=30, threads=False)
+                    if not raw.empty:
+                        break
+                    error = ValueError("provider returned no price rows")
+                except Exception as exc:
+                    error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+            else:
+                raise RuntimeError(f"Market data unavailable after 3 attempts: {error}")
+            normalized = normalize_bars(raw, provider_ticker)
+            from .storage import atomic_text
+            atomic_text(cache_path, normalized.reset_index().to_csv(index=False))
     bars = normalize_bars(raw, provider_ticker if not prices_dir else ticker)
     return bars[(bars.index >= pd.Timestamp(start)) & (bars.index < pd.Timestamp(end))]
 

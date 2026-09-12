@@ -50,11 +50,25 @@ Discover and review new candidates separately:
 ```powershell
 .\.venv\Scripts\python.exe observatory.py discover
 .\.venv\Scripts\python.exe observatory.py candidates list --state needs_review
-.\.venv\Scripts\python.exe observatory.py candidates approve TICKER --reason "Identity and chart reviewed"
-.\.venv\Scripts\python.exe observatory.py candidates reject TICKER --reason "Reason for rejection"
 .\.venv\Scripts\python.exe observatory.py candidates hold TICKER --reason "Corporate action requires review"
 .\.venv\Scripts\python.exe observatory.py candidates revalidate
 ```
+
+Approval and rejection now require a structured review. The command form is:
+
+```powershell
+.\.venv\Scripts\python.exe observatory.py candidates approve TICKER --reason "Validated listing; 4.1x volume; no corporate action found" --identity-checked --liquidity-checked --catalyst-category none_found --corporate-action none_found --data-quality complete --evidence-url "https://www.sec.gov/edgar/search/"
+```
+
+The dashboard presents the same fields and also identifies older approvals that still need structured documentation.
+
+Check the registered 12-week study without downloading data:
+
+```powershell
+.\.venv\Scripts\python.exe observatory.py study
+```
+
+The study freezes `activity-v2`, its threshold, and the fixed outcome version for the workspace. Each daily run also freezes a volume-only and largest-gainer comparison selected from that session's successfully scanned approved universe. The dashboard shows progress toward the 10-, 30-, and 60-session review gates. Machine learning remains gated until at least 100 finalized research observations exist.
 
 Discovery reads official Nasdaq Trader symbol directories, applies security-type exclusions, computes `discovery-v1` features, and nominates no more than ten symbols. Human approval is required before a symbol enters routine scans. Approval means “include this security in future research scans.” A session's universe remains frozen, so approvals made afterward begin with the next uncaptured completed session.
 

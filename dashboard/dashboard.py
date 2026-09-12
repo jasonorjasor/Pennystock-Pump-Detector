@@ -93,7 +93,7 @@ def main():
             if tracking["state"] == "partial":
                 st.warning("Some outcomes could not be refreshed; prior valid values were retained.")
 
-    briefing, performance, detail, candidates, social = st.tabs(["Research queue", "Evaluation", "Ticker notebook", "New candidates", "Social evidence"])
+    briefing, performance, detail, candidates, study_tab, social = st.tabs(["Research queue", "Evaluation", "Ticker notebook", "New candidates", "Study progress", "Social evidence"])
     with briefing:
         if alerts.empty:
             st.info("No alerts recorded. A healthy scan can finish with zero alerts.")
@@ -191,37 +191,91 @@ def main():
         if legacy:
             st.info("Select an Observatory workspace to review candidates.")
         else:
-            from pennystock.discovery import change_candidate, list_candidates
+            from pennystock.discovery import change_candidate, list_candidates, read_registry
             rows = list_candidates(workspace)
             pending = [r for r in rows if r["state"] == "needs_review"]
+            legacy_reviews = [r for r in rows if r["state"] == "approved" and not r.get("latest_review")]
+            if legacy_reviews:
+                st.warning(f"{len(legacy_reviews)} approved candidates still need the new structured review. They remain approved, but should be documented during this study.")
             if not pending:
                 st.info("No candidates need review. Run: python observatory.py discover")
             else:
                 ticker = st.selectbox("Candidate", [r["ticker"] for r in pending])
                 candidate = next(r for r in pending if r["ticker"] == ticker)
                 observation = candidate.get("latest_observation") or {}
+                registry = read_registry(workspace)
+                identity = max((r for r in registry["identities"] if r["symbol"] == ticker),
+                               key=lambda r: r["retrieved_at"], default={})
                 st.write({"state": candidate["state"], "quiet_comparison": candidate["quiet_comparison"],
+                          "issuer": identity.get("issuer"), "venue": identity.get("venue"),
                           "score_version": observation.get("score_version"), "discovery_score": observation.get("discovery_score"),
                           "coverage_status": observation.get("coverage_status"), "latest_price": observation.get("latest_price"),
                           "volume_ratio": observation.get("volume_ratio"), "volume_z": observation.get("volume_z"),
                           "return_1d": observation.get("return_1d"), "listing_deficiency": observation.get("listing_deficiency")})
                 st.caption("Discovery ranks research candidates. It is separate from market alerts and social evidence.")
+                st.link_button("Search SEC EDGAR", f"https://www.sec.gov/edgar/search/#/q={ticker}")
                 reason = st.text_input("Candidate review reason", key="candidate_reason")
+                identity_checked = st.checkbox("Identity and listing checked")
+                liquidity_checked = st.checkbox("Liquidity and chart checked")
+                catalyst = st.selectbox("Recent catalyst", ["unknown", "none_found", "company_news", "sec_filing", "analyst_or_media"])
+                corporate_action = st.selectbox("Corporate action", ["unknown", "none_found", "split", "offering", "symbol_change", "other"])
+                data_quality = st.selectbox("Data quality", ["unknown", "complete", "partial", "failed"])
+                evidence_url = st.text_input("Review evidence URL")
+                review = {"identity_checked": identity_checked, "liquidity_checked": liquidity_checked,
+                          "catalyst_category": catalyst, "corporate_action": corporate_action,
+                          "data_quality": data_quality, "evidence_url": evidence_url}
                 left, right = st.columns(2)
                 if left.button("Approve candidate"):
                     try:
-                        change_candidate(workspace, ticker, "approved", reason)
+                        change_candidate(workspace, ticker, "approved", reason, review=review)
                         st.success(f"{ticker} approved for the next uncaptured session.")
                         st.rerun()
                     except (ValueError, RuntimeError) as exc:
                         st.error(str(exc))
                 if right.button("Reject candidate"):
                     try:
-                        change_candidate(workspace, ticker, "rejected", reason)
+                        change_candidate(workspace, ticker, "rejected", reason, review=review)
                         st.success(f"{ticker} rejected; its history was retained.")
                         st.rerun()
                     except (ValueError, RuntimeError) as exc:
                         st.error(str(exc))
+            if legacy_reviews:
+                with st.expander("Document an existing approved candidate"):
+                    old_ticker = st.selectbox("Approved candidate", [r["ticker"] for r in legacy_reviews])
+                    old_reason = st.text_input("Existing-candidate review reason")
+                    old_identity = st.checkbox("Existing identity and listing checked")
+                    old_liquidity = st.checkbox("Existing liquidity and chart checked")
+                    old_catalyst = st.selectbox("Existing recent catalyst", ["unknown", "none_found", "company_news", "sec_filing", "analyst_or_media"])
+                    old_action = st.selectbox("Existing corporate action", ["unknown", "none_found", "split", "offering", "symbol_change", "other"])
+                    old_quality = st.selectbox("Existing data quality", ["unknown", "complete", "partial", "failed"])
+                    old_url = st.text_input("Existing review evidence URL")
+                    if st.button("Save existing structured review"):
+                        try:
+                            change_candidate(workspace, old_ticker, "approved", old_reason, review={
+                                "identity_checked": old_identity, "liquidity_checked": old_liquidity,
+                                "catalyst_category": old_catalyst, "corporate_action": old_action,
+                                "data_quality": old_quality, "evidence_url": old_url})
+                            st.success(f"Structured review saved for {old_ticker}.")
+                            st.rerun()
+                        except (ValueError, RuntimeError) as exc:
+                            st.error(str(exc))
+    with study_tab:
+        if legacy:
+            st.info("Select an Observatory workspace to inspect the prospective study.")
+        else:
+            from pennystock.study import study_report
+            study = study_report(workspace)
+            if not study["registered"]:
+                st.info("The prospective study begins with the next daily run.")
+            else:
+                st.metric("Completed sessions", f'{study["completed_sessions"]}/{study["target_sessions"]}')
+                st.progress(min(study["completed_sessions"] / study["target_sessions"], 1.0))
+                st.write({"study_version": study["study_version"], "started_session": study["started_session"],
+                          "coverage": study["coverage"], "next_gate": study["next_gate"]})
+                st.dataframe(pd.DataFrame(study["cohorts"]), hide_index=True)
+                if not study["machine_learning_eligible"]:
+                    st.info("Machine learning remains gated until at least 100 reviewed, finalized observations exist.")
+                st.caption("Score rules remain frozen for this workspace. Baselines are selected prospectively from the same scanned universe.")
 
     with social:
         if legacy:

@@ -91,3 +91,11 @@ Social and market scores are never merged. Their joined research labels are:
 Workspaces use atomic file replacement and a single writer lock. Scan attempts retain manifests, input-bar snapshots, hashes, status, timestamps, provider mode, and rule versions. This design is intended for one local writer. Concurrent or high-volume collection should use transactional storage.
 
 The current rules have not established predictive advantage. Reliable evaluation requires prospective alerts, fixed outcomes, quiet comparisons, adequate coverage, and chronological comparisons with simple baselines. Machine learning should only be considered after enough reviewed prospective events exist to evaluate it honestly.
+
+## Prospective evaluation
+
+The first routine daily run registers a 60-session, approximately 12-week study in its workspace. Market-score and outcome versions and the alert threshold are frozen. Changing them requires a separate workspace.
+
+For each completed session, the system prospectively records two simple controls from the same successfully scanned approved universe: the greatest volume ratio and the largest one-session return. These selections receive the same fixed ten-session price-pattern outcomes as market alerts. Study status reports coverage and comparisons at 10-, 30-, and 60-session gates. These controls measure whether the full score adds useful separation beyond simpler ranking rules; they do not provide causal evidence of manipulation.
+
+Candidate approval and rejection require structured human review. The stored record covers security identity, liquidity, data quality, observed catalyst category, corporate-action status, evidence URL, and a specific written reason. An approval only admits the ticker to prospective monitoring.

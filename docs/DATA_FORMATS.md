@@ -15,6 +15,8 @@ Generated workspaces live under `runs/` and are excluded from Git. JSON files us
 | `latest_scan.json` | Latest scan manifest, universe, coverage, and counts |
 | `latest_tracking.json` | Latest outcome-update manifest |
 | `daily_jobs.json` | Daily job attempts and completion status |
+| `study.json` | Registered study start, frozen rule versions, and evaluation gates |
+| `baseline_outcomes.csv` | Prospective volume-only and largest-gainer selections and fixed outcomes |
 | `notes.json` | Local observation notes and evidence links |
 | `attempts/<id>/` | Attempt manifest, archived bars, hashes, and per-ticker results |
 
@@ -26,6 +28,7 @@ The natural key for a market observation or outcome is ticker, session, and scor
 
 - `identities`: symbol, issuer, venue, security type, directory status, listing deficiency, source, and retrieval time
 - `candidates`: current state, first-seen time, latest transition time, reason, reviewer, and quiet-comparison flag
+- `transitions.review`: identity/liquidity checks, catalyst category, corporate-action status, data quality, and optional evidence URL for human decisions
 - `transitions`: prior state, new state, timestamp, reason, reviewer, and source snapshot
 - `discovery_runs`: session, configuration, score version, coverage counts, and status
 - `observations`: ticker, as-of time, market features, discovery score, collection status, and context flags

@@ -13,14 +13,18 @@ def daily(workspace=DEFAULT_WORKSPACE, session=None, prices_dir=None, watchlist=
     from .storage import atomic_text, save_json, writer_lock
     started = utcnow()
     initialize_registry(workspace, watchlist or ROOT / "source/MAIN/watchlist.txt")
+    from .study import ensure_study, record_baselines, track_baselines, study_report
+    ensure_study(workspace, session)
     scan_result = scan(workspace, session=session, watchlist=watchlist, mode="approved", prices_dir=prices_dir)
+    record_baselines(workspace, scan_result["session"])
     track_result = track(workspace, as_of=session, prices_dir=prices_dir)
+    baseline_result = track_baselines(workspace, as_of=session, prices_dir=prices_dir)
     readiness = research_readiness(workspace)
-    partial = scan_result["state"] == "partial" or track_result["state"] == "partial"
+    partial = scan_result["state"] == "partial" or track_result["state"] == "partial" or baseline_result["state"] == "partial"
     candidates = list_candidates(workspace, "needs_review")
     social_failures = sum(r["coverage_status"] not in {"complete", "not_collected"} for r in readiness["rows"])
     result = {"state": "partial" if partial else "complete", "scan": scan_result,
-            "tracking": track_result, "readiness": readiness,
+            "tracking": track_result, "baseline_tracking": baseline_result, "readiness": readiness,
             "briefing": str(Path(workspace) / "briefing.md")}
     job = {"kind": "daily", "started_at": started, "finished_at": utcnow(), "state": result["state"],
            "session": scan_result["session"], "score_version": scan_result["score_version"],
@@ -32,10 +36,13 @@ def daily(workspace=DEFAULT_WORKSPACE, session=None, prices_dir=None, watchlist=
             jobs.append(job)
             save_json(path, jobs)
         summary = json.loads((Path(workspace) / "summary.json").read_text(encoding="utf-8"))
+        study = study_report(workspace, scan_result["session"])
         atomic_text(Path(workspace) / "briefing.md", "# Microcap Observatory daily briefing\n\n"
             f"Session: {scan_result['session']}\n\nScan coverage: {scan_result['state']} {scan_result.get('counts', {})}\n\n"
             f"Recorded alerts: {summary['total']}\n\nPending outcomes: {summary['pending']}\n\n"
             f"Candidates awaiting review: {len(candidates)}\n\nSocial coverage failures: {social_failures}\n\n"
+            f"Study progress: {study['completed_sessions']}/{study['target_sessions']} completed sessions\n\n"
+            f"Next evaluation gate: {study['next_gate']}\n\n"
             "Scores describe unusual evidence; they are not fraud probabilities or investment advice.\n")
     return result
 
@@ -124,9 +131,19 @@ def main(argv=None):
         cp.add_argument("--reason", required=True)
         cp.add_argument("--reviewer", default="project-owner")
         cp.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
+        if action in {"approve", "reject"}:
+            cp.add_argument("--identity-checked", action="store_true")
+            cp.add_argument("--liquidity-checked", action="store_true")
+            cp.add_argument("--catalyst-category", choices=["none_found", "company_news", "sec_filing", "analyst_or_media", "unknown"], required=True)
+            cp.add_argument("--corporate-action", choices=["none_found", "split", "offering", "symbol_change", "other", "unknown"], required=True)
+            cp.add_argument("--data-quality", choices=["complete", "partial", "failed", "unknown"], required=True)
+            cp.add_argument("--evidence-url")
     cr = cs.add_parser("revalidate")
     cr.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
     cr.add_argument("--as-of")
+    study = sub.add_parser("study", help="Read the registered prospective-study status and baseline comparison")
+    study.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
+    study.add_argument("--as-of")
     sn = sub.add_parser("social-nominate", help="Nominate one eligible elevated social evaluation for review")
     sn.add_argument("evaluation_id")
     sn.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
@@ -145,9 +162,15 @@ def main(argv=None):
                 result = revalidate(**args)
             else:
                 state = {"approve": "approved", "reject": "rejected", "hold": "held", "archive": "archived"}[action]
+                review_keys = ["identity_checked", "liquidity_checked", "catalyst_category",
+                               "corporate_action", "data_quality", "evidence_url"]
+                review = {key: args.pop(key) for key in review_keys if key in args}
+                if review:
+                    args["review"] = review
                 result = change_candidate(new_state=state, **args)
         else:
             from .discovery import discover, nominate_from_social
+            from .study import study_report
             result = {"scan": scan, "track": track, "import-legacy": import_legacy,
                   "backtest": backtest, "analyze": analyze_existing, "demo": demo, "report": report,
                   "universe-init": universe_init, "social-import": social_import,
@@ -155,7 +178,7 @@ def main(argv=None):
                   "social-features": social_features, "social-demo": social_demo,
                   "research-readiness": research_readiness, "daily": daily,
                   "social-nominate": nominate_from_social,
-                  "discover": discover}[command](**args)
+                  "discover": discover, "study": study_report}[command](**args)
     except ModuleNotFoundError as exc:
         parser.exit(2, "Error: Missing project dependency " + str(exc) +
                     ". Run .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt -c requirements-tested.txt, then use .\\.venv\\Scripts\\python.exe.\n")
